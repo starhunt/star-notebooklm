@@ -5,7 +5,7 @@ Obsidian 노트를 Google NotebookLM에 소스로 추가하는 플러그인입�
 ## 특징
 
 - **내장 웹뷰**: Obsidian 내에서 NotebookLM 직접 사용
-- **원클릭 전송**: 노트를 NotebookLM 소스로 바로 추가
+- **다양한 전송 방법**: 리본 아이콘, 컨텍스트 메뉴, 명령어 팔레트
 - **API 직접 호출**: 빠르고 안정적인 소스 추가 (DOM 조작 대비)
 - **노트북 선택**: 기존 노트북 선택 또는 새로 생성
 
@@ -50,13 +50,14 @@ npm run build
 
 ```bash
 # macOS
-cp main.js manifest.json styles.css ~/Library/Application\ Support/obsidian/plugins/notebooklm-bridge/
+mkdir -p ~/Library/Application\ Support/obsidian/plugins/star-notebooklm/
+cp main.js manifest.json styles.css ~/Library/Application\ Support/obsidian/plugins/star-notebooklm/
 
 # Windows
-# %APPDATA%\obsidian\plugins\notebooklm-bridge\
+# %APPDATA%\obsidian\plugins\star-notebooklm\
 
 # Linux
-# ~/.config/obsidian/plugins/notebooklm-bridge/
+# ~/.config/obsidian/plugins/star-notebooklm/
 ```
 
 복사할 파일:
@@ -68,7 +69,7 @@ cp main.js manifest.json styles.css ~/Library/Application\ Support/obsidian/plug
 
 ### 1. NotebookLM 패널 열기
 
-- 리본의 📖 아이콘 클릭
+- 왼쪽 리본의 책 아이콘(book-open) 클릭
 - 또는 명령어 팔레트에서 `NotebookLM 열기`
 
 ### 2. 로그인
@@ -78,9 +79,15 @@ cp main.js manifest.json styles.css ~/Library/Application\ Support/obsidian/plug
 
 ### 3. 노트 전송
 
-- 노트를 열고 리본의 📤 아이콘 클릭
-- 또는 파일 탐색기에서 우클릭 → "NotebookLM에 전송"
-- 또는 명령어 `현재 노트를 NotebookLM에 전송`
+여러 가지 방법으로 노트를 전송할 수 있습니다:
+
+| 방법 | 설명 |
+|------|------|
+| 리본 아이콘 | 전송 아이콘(send) 클릭 |
+| 파일 탐색기 | 노트 우클릭 → "NotebookLM에 전송" |
+| 에디터 컨텍스트 메뉴 | 본문에서 우클릭 → "NotebookLM에 전송" |
+| 선택 영역 전송 | 텍스트 선택 후 우클릭 → "선택 영역을 NotebookLM에 전송" |
+| 명령어 팔레트 | `현재 노트를 NotebookLM에 전송` |
 
 ### 4. 노트북 선택
 
@@ -94,7 +101,6 @@ cp main.js manifest.json styles.css ~/Library/Application\ Support/obsidian/plug
 | `현재 노트를 NotebookLM에 전송` | 활성 노트를 NotebookLM에 추가 |
 | `선택된 텍스트를 NotebookLM에 전송` | 선택 영역만 추가 |
 | `NotebookLM 열기` | 웹뷰 패널 열기 |
-| `전송 대기열 비우기` | 대기열 초기화 |
 
 ## 설정
 
@@ -110,7 +116,7 @@ cp main.js manifest.json styles.css ~/Library/Application\ Support/obsidian/plug
 
 1. NotebookLM 패널에서 직접 로그인
 2. Google 계정 권한 확인
-3. 패널 새로고침 (우클릭 → 새로고침)
+3. 툴바의 "새로고침" 버튼 클릭
 
 ### 소스 추가 실패
 

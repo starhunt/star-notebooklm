@@ -76,25 +76,10 @@ var StarNotebookLMPlugin = class extends import_obsidian.Plugin {
       }
     });
     this.addCommand({
-      id: "clear-queue",
-      name: "\uC804\uC1A1 \uB300\uAE30\uC5F4 \uBE44\uC6B0\uAE30",
-      callback: () => {
-        this.noteQueue.clear();
-        new import_obsidian.Notice("\uB300\uAE30\uC5F4\uC774 \uBE44\uC6CC\uC84C\uC2B5\uB2C8\uB2E4");
-      }
-    });
-    this.addCommand({
       id: "open-notebooklm",
       name: "NotebookLM \uC5F4\uAE30",
       callback: async () => {
         await this.openNotebookLMView();
-      }
-    });
-    this.addCommand({
-      id: "debug-webview-dom",
-      name: "[DEBUG] NotebookLM \uD398\uC774\uC9C0 DOM \uC815\uBCF4 \uC218\uC9D1",
-      callback: async () => {
-        await this.debugWebviewDOM();
       }
     });
     this.registerEvent(
@@ -110,10 +95,15 @@ var StarNotebookLMPlugin = class extends import_obsidian.Plugin {
     );
     this.registerEvent(
       this.app.workspace.on("editor-menu", (menu, editor, view) => {
+        menu.addItem((item) => {
+          item.setTitle("NotebookLM\uC5D0 \uC804\uC1A1").setIcon("send").onClick(async () => {
+            await this.sendCurrentNoteToQueue();
+          });
+        });
         const selection = editor.getSelection();
         if (selection) {
           menu.addItem((item) => {
-            item.setTitle("\uC120\uD0DD \uC601\uC5ED\uC744 NotebookLM\uC5D0 \uC804\uC1A1").setIcon("send").onClick(async () => {
+            item.setTitle("\uC120\uD0DD \uC601\uC5ED\uC744 NotebookLM\uC5D0 \uC804\uC1A1").setIcon("text-select").onClick(async () => {
               var _a;
               await this.sendTextToQueue(selection, ((_a = view.file) == null ? void 0 : _a.basename) || "Selection");
             });
@@ -200,24 +190,24 @@ var StarNotebookLMPlugin = class extends import_obsidian.Plugin {
     return note;
   }
   async sendCurrentNoteToQueue() {
-    new import_obsidian.Notice("\uC804\uC1A1 \uBC84\uD2BC \uD074\uB9AD\uB428!");
     const note = await this.getCurrentNote();
     if (!note) {
       new import_obsidian.Notice("\uD65C\uC131 \uB178\uD2B8\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4");
       return;
     }
-    new import_obsidian.Notice(`\uB178\uD2B8: ${note.title} - \uBAA8\uB2EC \uC5F4\uAE30 \uC2DC\uB3C4`);
-    const notebooks = [];
-    const modal = new NotebookSelectModal(this.app, this, notebooks, note.title, async (selected) => {
-      if (selected) {
-        new import_obsidian.Notice(`\uC120\uD0DD: ${selected.title}`);
-      } else {
-        new import_obsidian.Notice("\uC0C8 \uB178\uD2B8\uBD81 \uB9CC\uB4E4\uAE30 \uC120\uD0DD\uB428");
-      }
-      this.addToQueue(note);
-      await this.openNotebookLMView();
-    });
-    modal.open();
+    await this.openNotebookLMView();
+    const view = this.getNotebookLMView();
+    if (view && view.webview) {
+      new import_obsidian.Notice("\uB178\uD2B8\uBD81 \uBAA9\uB85D\uC744 \uAC00\uC838\uC624\uB294 \uC911...");
+      view.webview.loadURL("https://notebooklm.google.com");
+      setTimeout(async () => {
+        const notebooks = await this.getNotebooksFromWebview();
+        console.log("[Star NotebookLM] Found notebooks:", notebooks);
+        this.showNotebookModal(note, notebooks);
+      }, 3e3);
+    } else {
+      this.showNotebookModal(note, []);
+    }
   }
   // 노트북 선택 모달 표시
   async showNotebookSelectModal(note) {
@@ -532,9 +522,36 @@ var StarNotebookLMPlugin = class extends import_obsidian.Plugin {
 							return false;
 						})();
 					`);
-          setTimeout(() => {
+          setTimeout(async () => {
+            await view.webview.executeJavaScript(`
+							(function() {
+								// \uBC29\uBC95 1: \uB2E4\uC774\uC5BC\uB85C\uADF8 \uB2EB\uAE30 \uBC84\uD2BC \uD074\uB9AD
+								const closeButtons = document.querySelectorAll('button[aria-label="\uB2EB\uAE30"], button[aria-label="Close"], mat-dialog-container button.close-button, .mat-mdc-dialog-container button[mat-dialog-close], mat-bottom-sheet-container button.close-button');
+								for (const btn of closeButtons) {
+									if (btn.offsetParent !== null) {
+										btn.click();
+										console.log('[Bridge] Closed dialog via close button');
+										return { success: true, method: 'closeButton' };
+									}
+								}
+
+								// \uBC29\uBC95 2: \uBC31\uB4DC\uB86D \uD074\uB9AD
+								const backdrop = document.querySelector('.cdk-overlay-backdrop, .mat-mdc-dialog-container + .cdk-overlay-backdrop');
+								if (backdrop) {
+									backdrop.click();
+									console.log('[Bridge] Closed dialog via backdrop');
+									return { success: true, method: 'backdrop' };
+								}
+
+								// \uBC29\uBC95 3: Escape \uD0A4 \uC804\uC1A1
+								document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+								console.log('[Bridge] Sent Escape key');
+								return { success: true, method: 'escape' };
+							})();
+						`);
+            await this.delay(500);
             this.addSourceToNotebook(view, note);
-          }, 3e3);
+          }, 3500);
         }
       }
     });
@@ -1445,8 +1462,19 @@ ${note.shareLink}`, 8e3);
       content: text,
       path: ""
     };
-    this.addToQueue(note);
-    new import_obsidian.Notice("\uC120\uD0DD\uB41C \uD14D\uC2A4\uD2B8\uAC00 \uB300\uAE30\uC5F4\uC5D0 \uCD94\uAC00\uB418\uC5C8\uC2B5\uB2C8\uB2E4.");
+    await this.openNotebookLMView();
+    const view = this.getNotebookLMView();
+    if (view && view.webview) {
+      new import_obsidian.Notice("\uB178\uD2B8\uBD81 \uBAA9\uB85D\uC744 \uAC00\uC838\uC624\uB294 \uC911...");
+      view.webview.loadURL("https://notebooklm.google.com");
+      setTimeout(async () => {
+        const notebooks = await this.getNotebooksFromWebview();
+        console.log("[Star NotebookLM] Found notebooks:", notebooks);
+        this.showNotebookModal(note, notebooks);
+      }, 3e3);
+    } else {
+      this.showNotebookModal(note, []);
+    }
   }
   addToQueue(note) {
     const id = `note-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -1483,8 +1511,6 @@ var NotebookLMView = class extends import_obsidian.ItemView {
     refreshBtn.onclick = () => this.refresh();
     const listBtn = toolbar.createEl("button", { text: "\u{1F4DA} \uB178\uD2B8\uBD81 \uBAA9\uB85D" });
     listBtn.onclick = () => this.goToNotebookList();
-    const addBtn = toolbar.createEl("button", { text: "\u{1F4E5} \uB300\uAE30\uC5F4 \uCD94\uAC00", cls: "mod-cta" });
-    addBtn.onclick = () => this.addFromQueue();
     this.webviewEl = container.createDiv("notebooklm-webview-container");
     const webviewHtml = `<webview
 			id="notebooklm-webview"
@@ -1841,17 +1867,34 @@ var StarNotebookLMSettingTab = class extends import_obsidian.PluginSettingTab {
       await this.plugin.saveSettings();
     }));
     containerEl.createEl("h3", { text: "\uC0AC\uC6A9\uBC95" });
-    containerEl.createEl("p", {
-      text: "1. \uB9AC\uBCF8\uC758 \u{1F4D6} \uC544\uC774\uCF58\uC744 \uD074\uB9AD\uD558\uC5EC NotebookLM \uD328\uB110\uC744 \uC5FD\uB2C8\uB2E4."
+    const usageList = containerEl.createEl("div");
+    usageList.style.marginLeft = "8px";
+    usageList.createEl("p", {
+      text: "1. \uC67C\uCABD \uB9AC\uBCF8\uC758 \uCC45 \uC544\uC774\uCF58(book-open)\uC744 \uD074\uB9AD\uD558\uC5EC NotebookLM \uD328\uB110\uC744 \uC5FD\uB2C8\uB2E4."
     });
-    containerEl.createEl("p", {
-      text: "2. Google \uACC4\uC815\uC73C\uB85C \uB85C\uADF8\uC778\uD569\uB2C8\uB2E4."
+    usageList.createEl("p", {
+      text: "2. NotebookLM \uD328\uB110\uC5D0\uC11C Google \uACC4\uC815\uC73C\uB85C \uB85C\uADF8\uC778\uD569\uB2C8\uB2E4."
     });
-    containerEl.createEl("p", {
-      text: "3. \uB178\uD2B8\uBD81\uC744 \uC120\uD0DD\uD558\uAC70\uB098 \uC0C8\uB85C \uB9CC\uB4ED\uB2C8\uB2E4."
+    usageList.createEl("p", {
+      text: "3. \uB178\uD2B8\uB97C \uC804\uC1A1\uD558\uB294 \uBC29\uBC95:"
     });
-    containerEl.createEl("p", {
-      text: "4. \uB9AC\uBCF8\uC758 \u{1F4E4} \uC544\uC774\uCF58\uC744 \uD074\uB9AD\uD558\uC5EC \uD604\uC7AC \uB178\uD2B8\uB97C \uC804\uC1A1\uD569\uB2C8\uB2E4."
+    const methodList = usageList.createEl("ul");
+    methodList.style.marginLeft = "16px";
+    methodList.style.marginTop = "4px";
+    methodList.createEl("li", {
+      text: "\uB9AC\uBCF8\uC758 \uC804\uC1A1 \uC544\uC774\uCF58(send) \uD074\uB9AD"
+    });
+    methodList.createEl("li", {
+      text: '\uD30C\uC77C \uD0D0\uC0C9\uAE30\uC5D0\uC11C \uB178\uD2B8 \uC6B0\uD074\uB9AD \u2192 "NotebookLM\uC5D0 \uC804\uC1A1"'
+    });
+    methodList.createEl("li", {
+      text: '\uC5D0\uB514\uD130\uC5D0\uC11C \uC6B0\uD074\uB9AD \u2192 "NotebookLM\uC5D0 \uC804\uC1A1" (\uC804\uCCB4 \uB178\uD2B8)'
+    });
+    methodList.createEl("li", {
+      text: '\uD14D\uC2A4\uD2B8 \uC120\uD0DD \uD6C4 \uC6B0\uD074\uB9AD \u2192 "\uC120\uD0DD \uC601\uC5ED\uC744 NotebookLM\uC5D0 \uC804\uC1A1"'
+    });
+    usageList.createEl("p", {
+      text: "4. \uB178\uD2B8\uBD81 \uC120\uD0DD \uBAA8\uB2EC\uC5D0\uC11C \uAE30\uC874 \uB178\uD2B8\uBD81\uC744 \uC120\uD0DD\uD558\uAC70\uB098 \uC0C8\uB85C \uB9CC\uB4ED\uB2C8\uB2E4."
     });
   }
 };

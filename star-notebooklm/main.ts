@@ -109,28 +109,10 @@ export default class StarNotebookLMPlugin extends Plugin {
 
 
 		this.addCommand({
-			id: 'clear-queue',
-			name: '전송 대기열 비우기',
-			callback: () => {
-				this.noteQueue.clear();
-				new Notice('대기열이 비워졌습니다');
-			}
-		});
-
-		this.addCommand({
 			id: 'open-notebooklm',
 			name: 'NotebookLM 열기',
 			callback: async () => {
 				await this.openNotebookLMView();
-			}
-		});
-
-		// 디버그: 현재 웹뷰 DOM 정보 수집
-		this.addCommand({
-			id: 'debug-webview-dom',
-			name: '[DEBUG] NotebookLM 페이지 DOM 정보 수집',
-			callback: async () => {
-				await this.debugWebviewDOM();
 			}
 		});
 
@@ -153,12 +135,23 @@ export default class StarNotebookLMPlugin extends Plugin {
 		// 에디터 메뉴에 항목 추가
 		this.registerEvent(
 			this.app.workspace.on('editor-menu', (menu: Menu, editor: Editor, view: MarkdownView) => {
+				// 현재 노트 전송 (항상 표시)
+				menu.addItem((item) => {
+					item
+						.setTitle('NotebookLM에 전송')
+						.setIcon('send')
+						.onClick(async () => {
+							await this.sendCurrentNoteToQueue();
+						});
+				});
+
+				// 선택 영역 전송 (선택된 텍스트가 있을 때만)
 				const selection = editor.getSelection();
 				if (selection) {
 					menu.addItem((item) => {
 						item
 							.setTitle('선택 영역을 NotebookLM에 전송')
-							.setIcon('send')
+							.setIcon('text-select')
 							.onClick(async () => {
 								await this.sendTextToQueue(selection, view.file?.basename || 'Selection');
 							});
@@ -265,28 +258,31 @@ export default class StarNotebookLMPlugin extends Plugin {
 	}
 
 	async sendCurrentNoteToQueue() {
-		new Notice('전송 버튼 클릭됨!'); // 디버그용
-
 		const note = await this.getCurrentNote();
 		if (!note) {
 			new Notice('활성 노트가 없습니다');
 			return;
 		}
 
-		new Notice(`노트: ${note.title} - 모달 열기 시도`); // 디버그용
+		// NotebookLM 뷰 열기
+		await this.openNotebookLMView();
+		const view = this.getNotebookLMView();
 
-		// 바로 모달 표시
-		const notebooks: NotebookInfo[] = []; // 빈 목록으로 테스트
-		const modal = new NotebookSelectModal(this.app, this, notebooks, note.title, async (selected) => {
-			if (selected) {
-				new Notice(`선택: ${selected.title}`);
-			} else {
-				new Notice('새 노트북 만들기 선택됨');
-			}
-			this.addToQueue(note);
-			await this.openNotebookLMView();
-		});
-		modal.open();
+		if (view && view.webview) {
+			// 노트북 목록 페이지로 이동
+			new Notice('노트북 목록을 가져오는 중...');
+			view.webview.loadURL('https://notebooklm.google.com');
+
+			// 페이지 로드 대기 후 노트북 목록 가져오고 모달 표시
+			setTimeout(async () => {
+				const notebooks = await this.getNotebooksFromWebview();
+				console.log('[Star NotebookLM] Found notebooks:', notebooks);
+				this.showNotebookModal(note, notebooks);
+			}, 3000);
+		} else {
+			// 웹뷰 없으면 바로 모달 표시
+			this.showNotebookModal(note, []);
+		}
 	}
 
 	// 노트북 선택 모달 표시
@@ -643,9 +639,41 @@ export default class StarNotebookLMPlugin extends Plugin {
 						})();
 					`);
 
-					setTimeout(() => {
+					// 새 노트북이 생성되면 자동으로 소스 추가 다이얼로그가 열림
+					// 이 다이얼로그를 닫고 API로 직접 소스 추가
+					setTimeout(async () => {
+						// 소스 추가 다이얼로그 닫기 (X 버튼 또는 Escape)
+						await view.webview.executeJavaScript(`
+							(function() {
+								// 방법 1: 다이얼로그 닫기 버튼 클릭
+								const closeButtons = document.querySelectorAll('button[aria-label="닫기"], button[aria-label="Close"], mat-dialog-container button.close-button, .mat-mdc-dialog-container button[mat-dialog-close], mat-bottom-sheet-container button.close-button');
+								for (const btn of closeButtons) {
+									if (btn.offsetParent !== null) {
+										btn.click();
+										console.log('[Bridge] Closed dialog via close button');
+										return { success: true, method: 'closeButton' };
+									}
+								}
+
+								// 방법 2: 백드롭 클릭
+								const backdrop = document.querySelector('.cdk-overlay-backdrop, .mat-mdc-dialog-container + .cdk-overlay-backdrop');
+								if (backdrop) {
+									backdrop.click();
+									console.log('[Bridge] Closed dialog via backdrop');
+									return { success: true, method: 'backdrop' };
+								}
+
+								// 방법 3: Escape 키 전송
+								document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+								console.log('[Bridge] Sent Escape key');
+								return { success: true, method: 'escape' };
+							})();
+						`);
+
+						// 다이얼로그 닫힌 후 API로 소스 추가
+						await this.delay(500);
 						this.addSourceToNotebook(view, note);
-					}, 3000);
+					}, 3500);
 				}
 			}
 		});
@@ -1639,8 +1667,26 @@ export default class StarNotebookLMPlugin extends Plugin {
 			content: text,
 			path: ''
 		};
-		this.addToQueue(note);
-		new Notice('선택된 텍스트가 대기열에 추가되었습니다.');
+
+		// NotebookLM 뷰 열기
+		await this.openNotebookLMView();
+		const view = this.getNotebookLMView();
+
+		if (view && view.webview) {
+			// 노트북 목록 페이지로 이동
+			new Notice('노트북 목록을 가져오는 중...');
+			view.webview.loadURL('https://notebooklm.google.com');
+
+			// 페이지 로드 대기 후 노트북 목록 가져오고 모달 표시
+			setTimeout(async () => {
+				const notebooks = await this.getNotebooksFromWebview();
+				console.log('[Star NotebookLM] Found notebooks:', notebooks);
+				this.showNotebookModal(note, notebooks);
+			}, 3000);
+		} else {
+			// 웹뷰 없으면 바로 모달 표시
+			this.showNotebookModal(note, []);
+		}
 	}
 
 	addToQueue(note: NoteData) {
@@ -1693,10 +1739,6 @@ class NotebookLMView extends ItemView {
 		// 노트북 목록 버튼
 		const listBtn = toolbar.createEl('button', { text: '📚 노트북 목록' });
 		listBtn.onclick = () => this.goToNotebookList();
-
-		// 대기열 추가 버튼
-		const addBtn = toolbar.createEl('button', { text: '📥 대기열 추가', cls: 'mod-cta' });
-		addBtn.onclick = () => this.addFromQueue();
 
 		// 상태 표시
 		this.webviewEl = container.createDiv('notebooklm-webview-container');
@@ -2128,17 +2170,39 @@ class StarNotebookLMSettingTab extends PluginSettingTab {
 
 		// 사용법
 		containerEl.createEl('h3', { text: '사용법' });
-		containerEl.createEl('p', {
-			text: '1. 리본의 📖 아이콘을 클릭하여 NotebookLM 패널을 엽니다.'
+
+		const usageList = containerEl.createEl('div');
+		usageList.style.marginLeft = '8px';
+
+		usageList.createEl('p', {
+			text: '1. 왼쪽 리본의 책 아이콘(book-open)을 클릭하여 NotebookLM 패널을 엽니다.'
 		});
-		containerEl.createEl('p', {
-			text: '2. Google 계정으로 로그인합니다.'
+		usageList.createEl('p', {
+			text: '2. NotebookLM 패널에서 Google 계정으로 로그인합니다.'
 		});
-		containerEl.createEl('p', {
-			text: '3. 노트북을 선택하거나 새로 만듭니다.'
+		usageList.createEl('p', {
+			text: '3. 노트를 전송하는 방법:'
 		});
-		containerEl.createEl('p', {
-			text: '4. 리본의 📤 아이콘을 클릭하여 현재 노트를 전송합니다.'
+
+		const methodList = usageList.createEl('ul');
+		methodList.style.marginLeft = '16px';
+		methodList.style.marginTop = '4px';
+
+		methodList.createEl('li', {
+			text: '리본의 전송 아이콘(send) 클릭'
+		});
+		methodList.createEl('li', {
+			text: '파일 탐색기에서 노트 우클릭 → "NotebookLM에 전송"'
+		});
+		methodList.createEl('li', {
+			text: '에디터에서 우클릭 → "NotebookLM에 전송" (전체 노트)'
+		});
+		methodList.createEl('li', {
+			text: '텍스트 선택 후 우클릭 → "선택 영역을 NotebookLM에 전송"'
+		});
+
+		usageList.createEl('p', {
+			text: '4. 노트북 선택 모달에서 기존 노트북을 선택하거나 새로 만듭니다.'
 		});
 	}
 }
