@@ -981,58 +981,92 @@ export default class NotebookLMBridgePlugin extends Plugin {
 			}
 
 			// Step 2: izAoDd RPC로 텍스트 소스 추가
-			// 페이로드: [[[null, [title, content], null, 2]], notebookId]
-			const result = await view.webview.executeJavaScript(`
-				(async function() {
-					const notebookId = ${JSON.stringify(pageInfo.notebookId)};
-					const atToken = ${JSON.stringify(pageInfo.atToken)};
-					const title = ${JSON.stringify(title)};
-					const content = ${JSON.stringify(content)};
+			// 변수를 안전하게 전달하기 위해 Base64 인코딩 사용
+			const encodedTitle = Buffer.from(title, 'utf-8').toString('base64');
+			const encodedContent = Buffer.from(content, 'utf-8').toString('base64');
+			const requestId = 'obsidian_api_' + Date.now();
 
-					const rpcId = 'izAoDd';
+			// API 호출 시작 (결과는 window 객체에 저장)
+			await view.webview.executeJavaScript(`
+				(function() {
+					// UTF-8 Base64 디코딩 함수
+					function decodeBase64UTF8(base64) {
+						var binary = atob(base64);
+						var bytes = new Uint8Array(binary.length);
+						for (var i = 0; i < binary.length; i++) {
+							bytes[i] = binary.charCodeAt(i);
+						}
+						return new TextDecoder('utf-8').decode(bytes);
+					}
+
+					var notebookId = "${pageInfo.notebookId}";
+					var atToken = "${pageInfo.atToken}";
+					var title = decodeBase64UTF8("${encodedTitle}");
+					var content = decodeBase64UTF8("${encodedContent}");
+					var requestId = "${requestId}";
+
+					window['__obsidian_result_' + requestId] = { pending: true };
+
+					var rpcId = 'izAoDd';
 
 					// nlm-py에서 검증된 텍스트 소스 페이로드
-					const requestPayload = [
+					var requestPayload = [
 						[
 							[
 								null,
-								[title, content],  // [제목, 내용] 배열
+								[title, content],
 								null,
-								2  // 소스 타입: 텍스트
+								2
 							]
 						],
 						notebookId
 					];
 
-					const requestBody = [[[rpcId, JSON.stringify(requestPayload), null, "generic"]]];
+					var requestBody = [[[rpcId, JSON.stringify(requestPayload), null, "generic"]]];
 
-					const formData = new URLSearchParams();
+					var formData = new URLSearchParams();
 					formData.append('at', atToken);
 					formData.append('f.req', JSON.stringify(requestBody));
 
-					try {
-						const response = await fetch('/_/LabsTailwindUi/data/batchexecute?rpcids=' + rpcId, {
-							method: 'POST',
-							headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-							body: formData.toString(),
-							credentials: 'include'
-						});
+					var xhr = new XMLHttpRequest();
+					xhr.open('POST', '/_/LabsTailwindUi/data/batchexecute?rpcids=' + rpcId, true);
+					xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded;charset=UTF-8');
+					xhr.withCredentials = true;
 
-						const text = await response.text();
+					xhr.onload = function() {
+						var text = xhr.responseText;
 						console.log('[API Response]', text.substring(0, 300));
-
-						if (response.ok && text.includes('wrb.fr')) {
-							// 소스 ID 추출
-							const match = text.match(/\[\[\[\\"([a-f0-9-]+)\\"\]/);
-							return { success: true, sourceId: match ? match[1] : null };
+						if (xhr.status === 200 && text.includes('wrb.fr')) {
+							window['__obsidian_result_' + requestId] = { success: true, pending: false };
 						} else {
-							return { success: false, error: 'API error', preview: text.substring(0, 200) };
+							window['__obsidian_result_' + requestId] = { success: false, pending: false, error: 'API error: ' + xhr.status };
 						}
-					} catch (error) {
-						return { success: false, error: error.message };
-					}
+					};
+
+					xhr.onerror = function() {
+						window['__obsidian_result_' + requestId] = { success: false, pending: false, error: 'Network error' };
+					};
+
+					xhr.send(formData.toString());
 				})();
 			`);
+
+			// 결과 폴링 (최대 10초)
+			let result = null;
+			for (let i = 0; i < 20; i++) {
+				await new Promise(resolve => setTimeout(resolve, 500));
+				result = await view.webview.executeJavaScript(`
+					(function() {
+						var r = window['__obsidian_result_${requestId}'];
+						if (r && !r.pending) {
+							delete window['__obsidian_result_${requestId}'];
+							return r;
+						}
+						return null;
+					})();
+				`);
+				if (result) break;
+			}
 
 			console.log('[NotebookLM Bridge] Text API result:', result);
 
@@ -1097,45 +1131,70 @@ export default class NotebookLMBridgePlugin extends Plugin {
 
 			// Step 2: izAoDd RPC로 URL 소스 추가
 			const shareLink = note.shareLink;
-			const result = await view.webview.executeJavaScript(`
-				(async function() {
-					const notebookId = ${JSON.stringify(pageInfo.notebookId)};
-					const atToken = ${JSON.stringify(pageInfo.atToken)};
-					const url = ${JSON.stringify(shareLink)};
+			const requestId = 'obsidian_url_api_' + Date.now();
 
-					const rpcId = 'izAoDd';
-					const requestBody = [[[rpcId, JSON.stringify([
+			// API 호출 시작 (결과는 window 객체에 저장)
+			await view.webview.executeJavaScript(`
+				(function() {
+					var notebookId = "${pageInfo.notebookId}";
+					var atToken = "${pageInfo.atToken}";
+					var url = "${shareLink}";
+					var requestId = "${requestId}";
+
+					window['__obsidian_result_' + requestId] = { pending: true };
+
+					var rpcId = 'izAoDd';
+					var requestPayload = [
 						[[null, null, [url], null, null, null, null, null, null, null, 1]],
 						notebookId,
 						[2],
 						[1, null, null, null, null, null, null, null, null, null, [1]]
-					]), null, "generic"]]];
+					];
+					var requestBody = [[[rpcId, JSON.stringify(requestPayload), null, "generic"]]];
 
-					const formData = new URLSearchParams();
+					var formData = new URLSearchParams();
 					formData.append('at', atToken);
 					formData.append('f.req', JSON.stringify(requestBody));
 
-					try {
-						const response = await fetch('/_/LabsTailwindUi/data/batchexecute?rpcids=' + rpcId, {
-							method: 'POST',
-							headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-							body: formData.toString(),
-							credentials: 'include'
-						});
+					var xhr = new XMLHttpRequest();
+					xhr.open('POST', '/_/LabsTailwindUi/data/batchexecute?rpcids=' + rpcId, true);
+					xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded;charset=UTF-8');
+					xhr.withCredentials = true;
 
-						const text = await response.text();
+					xhr.onload = function() {
+						var text = xhr.responseText;
 						console.log('[API Response]', text.substring(0, 300));
-
-						if (response.ok && text.includes('wrb.fr')) {
-							return { success: true, preview: text.substring(0, 200) };
+						if (xhr.status === 200 && text.includes('wrb.fr')) {
+							window['__obsidian_result_' + requestId] = { success: true, pending: false };
 						} else {
-							return { success: false, error: 'API error', preview: text.substring(0, 200) };
+							window['__obsidian_result_' + requestId] = { success: false, pending: false, error: 'API error: ' + xhr.status };
 						}
-					} catch (error) {
-						return { success: false, error: error.message };
-					}
+					};
+
+					xhr.onerror = function() {
+						window['__obsidian_result_' + requestId] = { success: false, pending: false, error: 'Network error' };
+					};
+
+					xhr.send(formData.toString());
 				})();
 			`);
+
+			// 결과 폴링 (최대 10초)
+			let result = null;
+			for (let i = 0; i < 20; i++) {
+				await new Promise(resolve => setTimeout(resolve, 500));
+				result = await view.webview.executeJavaScript(`
+					(function() {
+						var r = window['__obsidian_result_${requestId}'];
+						if (r && !r.pending) {
+							delete window['__obsidian_result_${requestId}'];
+							return r;
+						}
+						return null;
+					})();
+				`);
+				if (result) break;
+			}
 
 			console.log('[NotebookLM Bridge] URL API result:', result);
 

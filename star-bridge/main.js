@@ -824,57 +824,88 @@ var NotebookLMBridgePlugin = class extends import_obsidian.Plugin {
         await this.addSourceViaDOM(view, note);
         return;
       }
-      const result = await view.webview.executeJavaScript(`
-				(async function() {
-					const notebookId = ${JSON.stringify(pageInfo.notebookId)};
-					const atToken = ${JSON.stringify(pageInfo.atToken)};
-					const title = ${JSON.stringify(title)};
-					const content = ${JSON.stringify(content)};
+      const encodedTitle = Buffer.from(title, "utf-8").toString("base64");
+      const encodedContent = Buffer.from(content, "utf-8").toString("base64");
+      const requestId = "obsidian_api_" + Date.now();
+      await view.webview.executeJavaScript(`
+				(function() {
+					// UTF-8 Base64 \uB514\uCF54\uB529 \uD568\uC218
+					function decodeBase64UTF8(base64) {
+						var binary = atob(base64);
+						var bytes = new Uint8Array(binary.length);
+						for (var i = 0; i < binary.length; i++) {
+							bytes[i] = binary.charCodeAt(i);
+						}
+						return new TextDecoder('utf-8').decode(bytes);
+					}
 
-					const rpcId = 'izAoDd';
+					var notebookId = "${pageInfo.notebookId}";
+					var atToken = "${pageInfo.atToken}";
+					var title = decodeBase64UTF8("${encodedTitle}");
+					var content = decodeBase64UTF8("${encodedContent}");
+					var requestId = "${requestId}";
+
+					window['__obsidian_result_' + requestId] = { pending: true };
+
+					var rpcId = 'izAoDd';
 
 					// nlm-py\uC5D0\uC11C \uAC80\uC99D\uB41C \uD14D\uC2A4\uD2B8 \uC18C\uC2A4 \uD398\uC774\uB85C\uB4DC
-					const requestPayload = [
+					var requestPayload = [
 						[
 							[
 								null,
-								[title, content],  // [\uC81C\uBAA9, \uB0B4\uC6A9] \uBC30\uC5F4
+								[title, content],
 								null,
-								2  // \uC18C\uC2A4 \uD0C0\uC785: \uD14D\uC2A4\uD2B8
+								2
 							]
 						],
 						notebookId
 					];
 
-					const requestBody = [[[rpcId, JSON.stringify(requestPayload), null, "generic"]]];
+					var requestBody = [[[rpcId, JSON.stringify(requestPayload), null, "generic"]]];
 
-					const formData = new URLSearchParams();
+					var formData = new URLSearchParams();
 					formData.append('at', atToken);
 					formData.append('f.req', JSON.stringify(requestBody));
 
-					try {
-						const response = await fetch('/_/LabsTailwindUi/data/batchexecute?rpcids=' + rpcId, {
-							method: 'POST',
-							headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-							body: formData.toString(),
-							credentials: 'include'
-						});
+					var xhr = new XMLHttpRequest();
+					xhr.open('POST', '/_/LabsTailwindUi/data/batchexecute?rpcids=' + rpcId, true);
+					xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded;charset=UTF-8');
+					xhr.withCredentials = true;
 
-						const text = await response.text();
+					xhr.onload = function() {
+						var text = xhr.responseText;
 						console.log('[API Response]', text.substring(0, 300));
-
-						if (response.ok && text.includes('wrb.fr')) {
-							// \uC18C\uC2A4 ID \uCD94\uCD9C
-							const match = text.match(/[[[\\"([a-f0-9-]+)\\"]/);
-							return { success: true, sourceId: match ? match[1] : null };
+						if (xhr.status === 200 && text.includes('wrb.fr')) {
+							window['__obsidian_result_' + requestId] = { success: true, pending: false };
 						} else {
-							return { success: false, error: 'API error', preview: text.substring(0, 200) };
+							window['__obsidian_result_' + requestId] = { success: false, pending: false, error: 'API error: ' + xhr.status };
 						}
-					} catch (error) {
-						return { success: false, error: error.message };
-					}
+					};
+
+					xhr.onerror = function() {
+						window['__obsidian_result_' + requestId] = { success: false, pending: false, error: 'Network error' };
+					};
+
+					xhr.send(formData.toString());
 				})();
 			`);
+      let result = null;
+      for (let i = 0; i < 20; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        result = await view.webview.executeJavaScript(`
+					(function() {
+						var r = window['__obsidian_result_${requestId}'];
+						if (r && !r.pending) {
+							delete window['__obsidian_result_${requestId}'];
+							return r;
+						}
+						return null;
+					})();
+				`);
+        if (result)
+          break;
+      }
       console.log("[NotebookLM Bridge] Text API result:", result);
       if (result == null ? void 0 : result.success) {
         new import_obsidian.Notice(`\u2705 "${title}" \uD14D\uC2A4\uD2B8 \uC18C\uC2A4 \uCD94\uAC00 \uC644\uB8CC!`);
@@ -928,45 +959,67 @@ var NotebookLMBridgePlugin = class extends import_obsidian.Plugin {
         return;
       }
       const shareLink = note.shareLink;
-      const result = await view.webview.executeJavaScript(`
-				(async function() {
-					const notebookId = ${JSON.stringify(pageInfo.notebookId)};
-					const atToken = ${JSON.stringify(pageInfo.atToken)};
-					const url = ${JSON.stringify(shareLink)};
+      const requestId = "obsidian_url_api_" + Date.now();
+      await view.webview.executeJavaScript(`
+				(function() {
+					var notebookId = "${pageInfo.notebookId}";
+					var atToken = "${pageInfo.atToken}";
+					var url = "${shareLink}";
+					var requestId = "${requestId}";
 
-					const rpcId = 'izAoDd';
-					const requestBody = [[[rpcId, JSON.stringify([
+					window['__obsidian_result_' + requestId] = { pending: true };
+
+					var rpcId = 'izAoDd';
+					var requestPayload = [
 						[[null, null, [url], null, null, null, null, null, null, null, 1]],
 						notebookId,
 						[2],
 						[1, null, null, null, null, null, null, null, null, null, [1]]
-					]), null, "generic"]]];
+					];
+					var requestBody = [[[rpcId, JSON.stringify(requestPayload), null, "generic"]]];
 
-					const formData = new URLSearchParams();
+					var formData = new URLSearchParams();
 					formData.append('at', atToken);
 					formData.append('f.req', JSON.stringify(requestBody));
 
-					try {
-						const response = await fetch('/_/LabsTailwindUi/data/batchexecute?rpcids=' + rpcId, {
-							method: 'POST',
-							headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-							body: formData.toString(),
-							credentials: 'include'
-						});
+					var xhr = new XMLHttpRequest();
+					xhr.open('POST', '/_/LabsTailwindUi/data/batchexecute?rpcids=' + rpcId, true);
+					xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded;charset=UTF-8');
+					xhr.withCredentials = true;
 
-						const text = await response.text();
+					xhr.onload = function() {
+						var text = xhr.responseText;
 						console.log('[API Response]', text.substring(0, 300));
-
-						if (response.ok && text.includes('wrb.fr')) {
-							return { success: true, preview: text.substring(0, 200) };
+						if (xhr.status === 200 && text.includes('wrb.fr')) {
+							window['__obsidian_result_' + requestId] = { success: true, pending: false };
 						} else {
-							return { success: false, error: 'API error', preview: text.substring(0, 200) };
+							window['__obsidian_result_' + requestId] = { success: false, pending: false, error: 'API error: ' + xhr.status };
 						}
-					} catch (error) {
-						return { success: false, error: error.message };
-					}
+					};
+
+					xhr.onerror = function() {
+						window['__obsidian_result_' + requestId] = { success: false, pending: false, error: 'Network error' };
+					};
+
+					xhr.send(formData.toString());
 				})();
 			`);
+      let result = null;
+      for (let i = 0; i < 20; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        result = await view.webview.executeJavaScript(`
+					(function() {
+						var r = window['__obsidian_result_${requestId}'];
+						if (r && !r.pending) {
+							delete window['__obsidian_result_${requestId}'];
+							return r;
+						}
+						return null;
+					})();
+				`);
+        if (result)
+          break;
+      }
       console.log("[NotebookLM Bridge] URL API result:", result);
       if (result == null ? void 0 : result.success) {
         new import_obsidian.Notice(`\u2705 "${note.title}" URL \uC18C\uC2A4 \uCD94\uAC00 \uC644\uB8CC!`);
