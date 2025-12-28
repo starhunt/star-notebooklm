@@ -764,13 +764,8 @@ var NotebookLMBridgePlugin = class extends import_obsidian.Plugin {
   async addSourceToNotebook(view, note) {
     if (!view.webview)
       return;
-    if (note.shareLink) {
-      new import_obsidian.Notice(`"${note.title}" \uB9C1\uD06C \uC18C\uC2A4 \uCD94\uAC00 \uC911...`);
-      await this.addLinkSourceToNotebook(view, note);
-      return;
-    }
     const content = "# " + note.title + "\n\n" + note.content;
-    new import_obsidian.Notice(`"${note.title}" \uD14D\uC2A4\uD2B8 \uC18C\uC2A4 \uCD94\uAC00 \uC911...`);
+    new import_obsidian.Notice(`"${note.title}" \uC18C\uC2A4 \uCD94\uAC00 \uC911...`);
     try {
       await view.webview.executeJavaScript(`
 				(function() {

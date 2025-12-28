@@ -904,15 +904,16 @@ export default class NotebookLMBridgePlugin extends Plugin {
 	async addSourceToNotebook(view: NotebookLMView, note: NoteData) {
 		if (!view.webview) return;
 
+		// TODO: share_link 기능 - NotebookLM에서 share.note.sx URL을 허용하지 않아 비활성화
 		// share_link가 있으면 링크로 등록, 없으면 텍스트로 등록
-		if (note.shareLink) {
-			new Notice(`"${note.title}" 링크 소스 추가 중...`);
-			await this.addLinkSourceToNotebook(view, note);
-			return;
-		}
+		// if (note.shareLink) {
+		// 	new Notice(`"${note.title}" 링크 소스 추가 중...`);
+		// 	await this.addLinkSourceToNotebook(view, note);
+		// 	return;
+		// }
 
 		const content = '# ' + note.title + '\n\n' + note.content;
-		new Notice(`"${note.title}" 텍스트 소스 추가 중...`);
+		new Notice(`"${note.title}" 소스 추가 중...`);
 
 		try {
 			// Step 0: 모바일 뷰인 경우 "출처" 탭으로 전환
