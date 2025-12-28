@@ -25,18 +25,22 @@ interface NotebookInfo {
 	url: string;
 }
 
+type SourceAddMethod = 'dom' | 'api';
+
 interface NotebookLMBridgeSettings {
 	serverPort: number;
 	autoStart: boolean;
 	includeMetadata: boolean;
 	includeFrontmatter: boolean;
+	sourceAddMethod: SourceAddMethod; // 'dom' = DOM 조작, 'api' = API 직접 호출
 }
 
 const DEFAULT_SETTINGS: NotebookLMBridgeSettings = {
 	serverPort: 27123,
 	autoStart: true,
 	includeMetadata: true,
-	includeFrontmatter: false
+	includeFrontmatter: false,
+	sourceAddMethod: 'dom' // 기본값: DOM 조작 방식
 };
 
 interface NoteData {
@@ -904,16 +908,137 @@ export default class NotebookLMBridgePlugin extends Plugin {
 	async addSourceToNotebook(view: NotebookLMView, note: NoteData) {
 		if (!view.webview) return;
 
-		// TODO: share_link 기능 - NotebookLM에서 share.note.sx URL을 허용하지 않아 비활성화
-		// share_link가 있으면 링크로 등록, 없으면 텍스트로 등록
-		// if (note.shareLink) {
-		// 	new Notice(`"${note.title}" 링크 소스 추가 중...`);
-		// 	await this.addLinkSourceToNotebook(view, note);
-		// 	return;
-		// }
+		// 설정에 따라 방식 선택
+		if (this.settings.sourceAddMethod === 'api') {
+			await this.addSourceViaAPI(view, note);
+			return;
+		}
+
+		// DOM 조작 방식 (기본)
+		await this.addSourceViaDOM(view, note);
+	}
+
+	// API 직접 호출 방식으로 소스 추가
+	async addSourceViaAPI(view: NotebookLMView, note: NoteData) {
+		if (!view.webview) return;
 
 		const content = '# ' + note.title + '\n\n' + note.content;
-		new Notice(`"${note.title}" 소스 추가 중...`);
+		new Notice(`"${note.title}" API 방식으로 소스 추가 중...`);
+
+		try {
+			// Step 1: 현재 노트북 ID와 at 토큰 추출
+			const pageInfo = await view.webview.executeJavaScript(`
+				(function() {
+					// 노트북 ID 추출 (URL에서)
+					const match = window.location.pathname.match(/\\/notebook\\/([^/]+)/);
+					const notebookId = match ? match[1] : null;
+
+					// at 토큰 추출 (페이지 소스에서)
+					let atToken = null;
+					const scripts = document.querySelectorAll('script');
+					for (const script of scripts) {
+						const text = script.textContent || '';
+						// "SNlM0e":"TOKEN" 패턴 찾기
+						const tokenMatch = text.match(/"SNlM0e":"([^"]+)"/);
+						if (tokenMatch) {
+							atToken = tokenMatch[1];
+							break;
+						}
+					}
+
+					// 대체 방법: window.WIZ_global_data에서 추출
+					if (!atToken && window.WIZ_global_data && window.WIZ_global_data.SNlM0e) {
+						atToken = window.WIZ_global_data.SNlM0e;
+					}
+
+					return { notebookId, atToken };
+				})();
+			`);
+
+			console.log('[NotebookLM Bridge] Page info:', pageInfo);
+
+			if (!pageInfo.notebookId) {
+				new Notice('노트북 ID를 찾을 수 없습니다. 노트북 안에서 실행해주세요.');
+				return;
+			}
+
+			if (!pageInfo.atToken) {
+				new Notice('인증 토큰을 찾을 수 없습니다. DOM 방식으로 전환합니다.');
+				await this.addSourceViaDOM(view, note);
+				return;
+			}
+
+			// Step 2: API 호출로 텍스트 소스 추가
+			// izAoDd RPC는 URL용이고, 텍스트용 RPC ID를 찾아야 함
+			// 일단 텍스트는 다른 RPC를 사용할 수 있음 - 텍스트 추가용 RPC 찾기
+			const result = await view.webview.executeJavaScript(`
+				(async function() {
+					const notebookId = ${JSON.stringify(pageInfo.notebookId)};
+					const atToken = ${JSON.stringify(pageInfo.atToken)};
+					const content = ${JSON.stringify(content)};
+
+					// 텍스트 소스 추가 API 호출
+					// RPC ID for text source: 확인 필요 - 일단 시도
+					const rpcId = 'aJdXGd'; // 텍스트 소스 추가용 (추정)
+
+					const requestBody = [[[rpcId, JSON.stringify([
+						[[null, content, null, null, null, null, null, null, null, null, 2]], // 텍스트 내용
+						notebookId,
+						[2],
+						[1, null, null, null, null, null, null, null, null, null, [1]]
+					]), null, "generic"]]];
+
+					const formData = new URLSearchParams();
+					formData.append('at', atToken);
+					formData.append('f.req', JSON.stringify(requestBody));
+
+					try {
+						const response = await fetch('/_/LabsTailwindUi/data/batchexecute?rpcids=' + rpcId, {
+							method: 'POST',
+							headers: {
+								'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+							},
+							body: formData.toString(),
+							credentials: 'include'
+						});
+
+						const text = await response.text();
+						console.log('[API Response]', text.substring(0, 500));
+
+						if (response.ok && !text.includes('error')) {
+							return { success: true, response: text.substring(0, 200) };
+						} else {
+							return { success: false, error: 'API returned error', response: text.substring(0, 200) };
+						}
+					} catch (error) {
+						return { success: false, error: error.message };
+					}
+				})();
+			`);
+
+			console.log('[NotebookLM Bridge] API result:', result);
+
+			if (result?.success) {
+				new Notice(`✅ "${note.title}" API로 소스 추가 완료!`);
+			} else {
+				console.log('[NotebookLM Bridge] API failed, falling back to DOM');
+				new Notice('API 방식 실패. DOM 방식으로 재시도...');
+				await this.addSourceViaDOM(view, note);
+			}
+
+		} catch (error) {
+			console.error('[NotebookLM Bridge] API method failed:', error);
+			new Notice('API 방식 실패. DOM 방식으로 재시도...');
+			await this.addSourceViaDOM(view, note);
+		}
+	}
+
+	// DOM 조작 방식으로 소스 추가
+	async addSourceViaDOM(view: NotebookLMView, note: NoteData) {
+		if (!view.webview) return;
+
+		const content = '# ' + note.title + '\n\n' + note.content;
+		new Notice(`"${note.title}" DOM 방식으로 소스 추가 중...`);
 
 		try {
 			// Step 0: 모바일 뷰인 경우 "출처" 탭으로 전환
@@ -2035,6 +2160,19 @@ class NotebookLMBridgeSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.includeFrontmatter)
 				.onChange(async (value) => {
 					this.plugin.settings.includeFrontmatter = value;
+					await this.plugin.saveSettings();
+				}));
+
+		// 소스 추가 방식 선택
+		new Setting(containerEl)
+			.setName('소스 추가 방식')
+			.setDesc('NotebookLM에 소스를 추가하는 방식을 선택합니다')
+			.addDropdown(dropdown => dropdown
+				.addOption('dom', 'DOM 조작 (기본, 안정적)')
+				.addOption('api', 'API 직접 호출 (실험적, 빠름)')
+				.setValue(this.plugin.settings.sourceAddMethod)
+				.onChange(async (value: 'dom' | 'api') => {
+					this.plugin.settings.sourceAddMethod = value;
 					await this.plugin.saveSettings();
 				}));
 

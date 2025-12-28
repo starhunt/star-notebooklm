@@ -45,7 +45,9 @@ var DEFAULT_SETTINGS = {
   serverPort: 27123,
   autoStart: true,
   includeMetadata: true,
-  includeFrontmatter: false
+  includeFrontmatter: false,
+  sourceAddMethod: "dom"
+  // 기본값: DOM 조작 방식
 };
 var NotebookLMBridgePlugin = class extends import_obsidian.Plugin {
   constructor() {
@@ -764,8 +766,120 @@ var NotebookLMBridgePlugin = class extends import_obsidian.Plugin {
   async addSourceToNotebook(view, note) {
     if (!view.webview)
       return;
+    if (this.settings.sourceAddMethod === "api") {
+      await this.addSourceViaAPI(view, note);
+      return;
+    }
+    await this.addSourceViaDOM(view, note);
+  }
+  // API 직접 호출 방식으로 소스 추가
+  async addSourceViaAPI(view, note) {
+    if (!view.webview)
+      return;
     const content = "# " + note.title + "\n\n" + note.content;
-    new import_obsidian.Notice(`"${note.title}" \uC18C\uC2A4 \uCD94\uAC00 \uC911...`);
+    new import_obsidian.Notice(`"${note.title}" API \uBC29\uC2DD\uC73C\uB85C \uC18C\uC2A4 \uCD94\uAC00 \uC911...`);
+    try {
+      const pageInfo = await view.webview.executeJavaScript(`
+				(function() {
+					// \uB178\uD2B8\uBD81 ID \uCD94\uCD9C (URL\uC5D0\uC11C)
+					const match = window.location.pathname.match(/\\/notebook\\/([^/]+)/);
+					const notebookId = match ? match[1] : null;
+
+					// at \uD1A0\uD070 \uCD94\uCD9C (\uD398\uC774\uC9C0 \uC18C\uC2A4\uC5D0\uC11C)
+					let atToken = null;
+					const scripts = document.querySelectorAll('script');
+					for (const script of scripts) {
+						const text = script.textContent || '';
+						// "SNlM0e":"TOKEN" \uD328\uD134 \uCC3E\uAE30
+						const tokenMatch = text.match(/"SNlM0e":"([^"]+)"/);
+						if (tokenMatch) {
+							atToken = tokenMatch[1];
+							break;
+						}
+					}
+
+					// \uB300\uCCB4 \uBC29\uBC95: window.WIZ_global_data\uC5D0\uC11C \uCD94\uCD9C
+					if (!atToken && window.WIZ_global_data && window.WIZ_global_data.SNlM0e) {
+						atToken = window.WIZ_global_data.SNlM0e;
+					}
+
+					return { notebookId, atToken };
+				})();
+			`);
+      console.log("[NotebookLM Bridge] Page info:", pageInfo);
+      if (!pageInfo.notebookId) {
+        new import_obsidian.Notice("\uB178\uD2B8\uBD81 ID\uB97C \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4. \uB178\uD2B8\uBD81 \uC548\uC5D0\uC11C \uC2E4\uD589\uD574\uC8FC\uC138\uC694.");
+        return;
+      }
+      if (!pageInfo.atToken) {
+        new import_obsidian.Notice("\uC778\uC99D \uD1A0\uD070\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4. DOM \uBC29\uC2DD\uC73C\uB85C \uC804\uD658\uD569\uB2C8\uB2E4.");
+        await this.addSourceViaDOM(view, note);
+        return;
+      }
+      const result = await view.webview.executeJavaScript(`
+				(async function() {
+					const notebookId = ${JSON.stringify(pageInfo.notebookId)};
+					const atToken = ${JSON.stringify(pageInfo.atToken)};
+					const content = ${JSON.stringify(content)};
+
+					// \uD14D\uC2A4\uD2B8 \uC18C\uC2A4 \uCD94\uAC00 API \uD638\uCD9C
+					// RPC ID for text source: \uD655\uC778 \uD544\uC694 - \uC77C\uB2E8 \uC2DC\uB3C4
+					const rpcId = 'aJdXGd'; // \uD14D\uC2A4\uD2B8 \uC18C\uC2A4 \uCD94\uAC00\uC6A9 (\uCD94\uC815)
+
+					const requestBody = [[[rpcId, JSON.stringify([
+						[[null, content, null, null, null, null, null, null, null, null, 2]], // \uD14D\uC2A4\uD2B8 \uB0B4\uC6A9
+						notebookId,
+						[2],
+						[1, null, null, null, null, null, null, null, null, null, [1]]
+					]), null, "generic"]]];
+
+					const formData = new URLSearchParams();
+					formData.append('at', atToken);
+					formData.append('f.req', JSON.stringify(requestBody));
+
+					try {
+						const response = await fetch('/_/LabsTailwindUi/data/batchexecute?rpcids=' + rpcId, {
+							method: 'POST',
+							headers: {
+								'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+							},
+							body: formData.toString(),
+							credentials: 'include'
+						});
+
+						const text = await response.text();
+						console.log('[API Response]', text.substring(0, 500));
+
+						if (response.ok && !text.includes('error')) {
+							return { success: true, response: text.substring(0, 200) };
+						} else {
+							return { success: false, error: 'API returned error', response: text.substring(0, 200) };
+						}
+					} catch (error) {
+						return { success: false, error: error.message };
+					}
+				})();
+			`);
+      console.log("[NotebookLM Bridge] API result:", result);
+      if (result == null ? void 0 : result.success) {
+        new import_obsidian.Notice(`\u2705 "${note.title}" API\uB85C \uC18C\uC2A4 \uCD94\uAC00 \uC644\uB8CC!`);
+      } else {
+        console.log("[NotebookLM Bridge] API failed, falling back to DOM");
+        new import_obsidian.Notice("API \uBC29\uC2DD \uC2E4\uD328. DOM \uBC29\uC2DD\uC73C\uB85C \uC7AC\uC2DC\uB3C4...");
+        await this.addSourceViaDOM(view, note);
+      }
+    } catch (error) {
+      console.error("[NotebookLM Bridge] API method failed:", error);
+      new import_obsidian.Notice("API \uBC29\uC2DD \uC2E4\uD328. DOM \uBC29\uC2DD\uC73C\uB85C \uC7AC\uC2DC\uB3C4...");
+      await this.addSourceViaDOM(view, note);
+    }
+  }
+  // DOM 조작 방식으로 소스 추가
+  async addSourceViaDOM(view, note) {
+    if (!view.webview)
+      return;
+    const content = "# " + note.title + "\n\n" + note.content;
+    new import_obsidian.Notice(`"${note.title}" DOM \uBC29\uC2DD\uC73C\uB85C \uC18C\uC2A4 \uCD94\uAC00 \uC911...`);
     try {
       await view.webview.executeJavaScript(`
 				(function() {
@@ -1751,6 +1865,10 @@ var NotebookLMBridgeSettingTab = class extends import_obsidian.PluginSettingTab 
     }));
     new import_obsidian.Setting(containerEl).setName("Frontmatter \uD3EC\uD568").setDesc("\uB178\uD2B8 \uC804\uC1A1 \uC2DC YAML frontmatter \uD3EC\uD568").addToggle((toggle) => toggle.setValue(this.plugin.settings.includeFrontmatter).onChange(async (value) => {
       this.plugin.settings.includeFrontmatter = value;
+      await this.plugin.saveSettings();
+    }));
+    new import_obsidian.Setting(containerEl).setName("\uC18C\uC2A4 \uCD94\uAC00 \uBC29\uC2DD").setDesc("NotebookLM\uC5D0 \uC18C\uC2A4\uB97C \uCD94\uAC00\uD558\uB294 \uBC29\uC2DD\uC744 \uC120\uD0DD\uD569\uB2C8\uB2E4").addDropdown((dropdown) => dropdown.addOption("dom", "DOM \uC870\uC791 (\uAE30\uBCF8, \uC548\uC815\uC801)").addOption("api", "API \uC9C1\uC811 \uD638\uCD9C (\uC2E4\uD5D8\uC801, \uBE60\uB984)").setValue(this.plugin.settings.sourceAddMethod).onChange(async (value) => {
+      this.plugin.settings.sourceAddMethod = value;
       await this.plugin.saveSettings();
     }));
     new import_obsidian.Setting(containerEl).setName("\uC11C\uBC84 \uC81C\uC5B4").setDesc("\uBE0C\uB9BF\uC9C0 \uC11C\uBC84 \uC2DC\uC791 \uB610\uB294 \uC911\uC9C0").addButton((button) => button.setButtonText(this.plugin.isServerRunning ? "\uC11C\uBC84 \uC911\uC9C0" : "\uC11C\uBC84 \uC2DC\uC791").onClick(async () => {
