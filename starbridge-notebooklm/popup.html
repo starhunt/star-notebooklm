@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Obsidian to NotebookLM</title>
+  <link rel="stylesheet" href="popup-styles.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>📓 Obsidian → NotebookLM</h1>
+    </header>
+
+    <!-- 연결 상태 -->
+    <section class="status-section">
+      <div class="status-item">
+        <span class="status-label">옵시디언 서버:</span>
+        <span id="obsidian-status" class="status-badge disconnected">연결 중...</span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">NotebookLM:</span>
+        <span id="notebooklm-status" class="status-badge disconnected">확인 중...</span>
+      </div>
+    </section>
+
+    <!-- 대기열 -->
+    <section class="queue-section">
+      <h2>📋 전송 대기열 <span id="queue-count" class="badge">0</span></h2>
+      <div id="queue-list" class="queue-list">
+        <p class="empty-message">대기 중인 노트가 없습니다</p>
+      </div>
+    </section>
+
+    <!-- 액션 버튼들 -->
+    <section class="action-section">
+      <button id="btn-add-all" class="btn btn-primary" disabled>
+        📤 모두 NotebookLM에 추가
+      </button>
+      <button id="btn-add-current" class="btn btn-secondary" disabled>
+        📄 현재 노트 추가
+      </button>
+      <button id="btn-refresh" class="btn btn-outline">
+        🔄 새로고침
+      </button>
+    </section>
+
+    <!-- 설정 -->
+    <section class="settings-section">
+      <h2>⚙️ 설정</h2>
+      <div class="setting-item">
+        <label for="server-port">서버 포트:</label>
+        <input type="number" id="server-port" value="27123" min="1" max="65535">
+      </div>
+      <div class="setting-item">
+        <label for="auto-add">
+          <input type="checkbox" id="auto-add">
+          자동으로 소스 추가
+        </label>
+      </div>
+    </section>
+
+    <!-- 안내 메시지 -->
+    <section class="info-section">
+      <p class="info-text">
+        💡 옵시디언에서 노트를 전송하면 여기에 대기열로 표시됩니다.
+        NotebookLM 페이지에서 '추가' 버튼을 눌러 소스로 추가하세요.
+      </p>
+    </section>
+
+    <!-- 알림 영역 -->
+    <div id="notification" class="notification hidden"></div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

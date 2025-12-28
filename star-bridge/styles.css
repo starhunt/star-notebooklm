@@ -1,0 +1,187 @@
+/* NotebookLM Bridge Plugin Styles */
+
+.notebooklm-bridge-status {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.notebooklm-bridge-status .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
+.notebooklm-bridge-status .status-dot.running {
+    background-color: #22c55e;
+}
+
+.notebooklm-bridge-status .status-dot.stopped {
+    background-color: #ef4444;
+}
+
+/* NotebookLM 웹뷰 컨테이너 */
+.notebooklm-view-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background: var(--background-primary);
+}
+
+/* 툴바 */
+.notebooklm-toolbar {
+    display: flex;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--background-secondary);
+    border-bottom: 1px solid var(--background-modifier-border);
+    flex-wrap: wrap;
+}
+
+.notebooklm-toolbar button {
+    padding: 6px 12px;
+    font-size: 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    color: var(--text-normal);
+    transition: all 0.2s;
+}
+
+.notebooklm-toolbar button:hover {
+    background: var(--background-modifier-hover);
+}
+
+.notebooklm-toolbar button.mod-cta {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    border-color: var(--interactive-accent);
+}
+
+.notebooklm-toolbar button.mod-cta:hover {
+    background: var(--interactive-accent-hover);
+}
+
+/* 웹뷰 컨테이너 */
+.notebooklm-webview-container {
+    flex: 1;
+    overflow: hidden;
+}
+
+.notebooklm-webview-container webview {
+    width: 100%;
+    height: 100%;
+    border: none;
+}
+
+/* 노트북 선택 모달 */
+.notebooklm-select-modal {
+    padding: 20px;
+    min-width: 400px;
+}
+
+.notebooklm-select-modal h2 {
+    margin-bottom: 8px;
+}
+
+.notebooklm-select-modal .modal-description {
+    color: var(--text-muted);
+    margin-bottom: 20px;
+    font-size: 14px;
+}
+
+.notebooklm-select-modal .modal-section {
+    margin-bottom: 20px;
+}
+
+.notebooklm-select-modal .modal-section h3 {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 10px;
+}
+
+.notebook-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.notebook-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: var(--background-secondary);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: 1px solid var(--background-modifier-border);
+}
+
+.notebook-item:hover {
+    background: var(--background-modifier-hover);
+    border-color: var(--interactive-accent);
+}
+
+.notebook-item .notebook-icon {
+    font-size: 20px;
+}
+
+.notebook-item .notebook-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.notebook-item .notebook-title {
+    font-weight: 500;
+}
+
+.notebook-item .notebook-desc {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.notebook-item.new {
+    background: var(--background-primary);
+    border-style: dashed;
+    border-color: var(--interactive-accent);
+}
+
+.notebook-item.new:hover {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+}
+
+.notebook-item.new:hover .notebook-desc {
+    color: var(--text-on-accent);
+    opacity: 0.8;
+}
+
+.notebooklm-select-modal .empty-message {
+    padding: 16px;
+    background: var(--background-secondary);
+    border-radius: 8px;
+    text-align: center;
+}
+
+.notebooklm-select-modal .empty-message .hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 8px;
+}
+
+.notebooklm-select-modal .modal-footer {
+    margin-top: 20px;
+    display: flex;
+    justify-content: flex-end;
+}
+
+.notebooklm-select-modal .modal-footer button {
+    padding: 8px 16px;
+}

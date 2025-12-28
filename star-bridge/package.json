@@ -1,0 +1,24 @@
+{
+	"name": "obsidian-notebooklm-bridge",
+	"version": "1.0.0",
+	"description": "Bridge plugin to send Obsidian notes to NotebookLM",
+	"main": "main.js",
+	"scripts": {
+		"dev": "node esbuild.config.mjs",
+		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
+	},
+	"keywords": [
+		"obsidian",
+		"notebooklm",
+		"bridge"
+	],
+	"author": "Your Name",
+	"license": "MIT",
+	"devDependencies": {
+		"@types/node": "^20.10.0",
+		"builtin-modules": "^3.3.0",
+		"esbuild": "^0.19.0",
+		"obsidian": "^1.4.11",
+		"typescript": "^5.3.0"
+	}
+}

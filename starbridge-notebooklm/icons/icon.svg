@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#764ba2;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Background -->
+  <rect width="128" height="128" rx="24" fill="url(#grad)"/>
+  <!-- Notebook icon -->
+  <path d="M32 28h64c4.4 0 8 3.6 8 8v56c0 4.4-3.6 8-8 8H32c-4.4 0-8-3.6-8-8V36c0-4.4 3.6-8 8-8z" fill="white" opacity="0.9"/>
+  <!-- Lines -->
+  <path d="M40 48h48M40 64h48M40 80h32" stroke="#667eea" stroke-width="4" stroke-linecap="round" fill="none"/>
+  <!-- Arrow -->
+  <path d="M88 76l16 16m0 0l-8-8m8 8l-8 0" stroke="white" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>
