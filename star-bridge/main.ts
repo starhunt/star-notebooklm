@@ -43,6 +43,7 @@ interface NoteData {
 	title: string;
 	content: string;
 	path: string;
+	shareLink?: string; // share_link frontmatter property
 	metadata?: {
 		created?: number;
 		modified?: number;
@@ -426,7 +427,14 @@ export default class NotebookLMBridgePlugin extends Plugin {
 
 	async getFileContent(file: TFile): Promise<NoteData> {
 		let content = await this.app.vault.read(file);
-		
+		const cache = this.app.metadataCache.getFileCache(file);
+
+		// share_link frontmatter 속성 추출
+		let shareLink: string | undefined;
+		if (cache?.frontmatter?.share_link) {
+			shareLink = cache.frontmatter.share_link;
+		}
+
 		// Frontmatter 처리
 		if (!this.settings.includeFrontmatter) {
 			content = content.replace(/^---\n[\s\S]*?\n---\n/, '');
@@ -435,11 +443,11 @@ export default class NotebookLMBridgePlugin extends Plugin {
 		const note: NoteData = {
 			title: file.basename,
 			content: content.trim(),
-			path: file.path
+			path: file.path,
+			shareLink: shareLink
 		};
 
 		if (this.settings.includeMetadata) {
-			const cache = this.app.metadataCache.getFileCache(file);
 			note.metadata = {
 				created: file.stat.ctime,
 				modified: file.stat.mtime,
@@ -594,7 +602,7 @@ export default class NotebookLMBridgePlugin extends Plugin {
 					const notebooks = [];
 					const seen = new Set();
 
-					// 방법 1: project-table에서 노트북 제목 가져오기
+					// 방법 1: project-table에서 노트북 제목 가져오기 (모바일/좁은 화면)
 					const table = document.querySelector('table.project-table');
 					if (table) {
 						const rows = table.querySelectorAll('tbody tr, tr');
@@ -607,31 +615,60 @@ export default class NotebookLMBridgePlugin extends Plugin {
 									notebooks.push({
 										id: 'row-' + index,
 										title: title,
-										url: '',  // URL 없음, 행 클릭으로 이동
-										rowIndex: index
+										url: '',
+										rowIndex: index,
+										viewType: 'table'
 									});
 								}
 							}
 						});
 					}
 
-					// 방법 2: project-table-title 스팬 직접 찾기
+					// 방법 2: PC 뷰 카드 레이아웃 - project-button 요소 (넓은 화면)
 					if (notebooks.length === 0) {
-						document.querySelectorAll('.project-table-title, span[class*="project-table-title"]').forEach((el, index) => {
-							const title = el.textContent.trim();
-							if (title && !seen.has(title)) {
-								seen.add(title);
-								notebooks.push({
-									id: 'title-' + index,
-									title: title,
-									url: '',
-									rowIndex: index
-								});
+						// project-button 요소들 찾기 (PC 카드 뷰의 메인 컨테이너)
+						const projectButtons = document.querySelectorAll('project-button.project-button');
+						projectButtons.forEach((btn, index) => {
+							// span.project-button-title에서 제목 추출
+							const titleEl = btn.querySelector('span.project-button-title, .project-button-title');
+							if (titleEl) {
+								const title = titleEl.textContent.trim();
+								if (title && !seen.has(title) && !title.includes('새 노트') && !title.includes('만들기')) {
+									seen.add(title);
+									notebooks.push({
+										id: 'projectbtn-' + index,
+										title: title,
+										url: '',
+										cardIndex: index,
+										viewType: 'projectButton'
+									});
+								}
 							}
 						});
 					}
 
-					// 방법 3: a[href*="/notebook/"] 링크 찾기 (이전 방식)
+					// 방법 3: mat-card.project-button-card 찾기
+					if (notebooks.length === 0) {
+						const matCards = document.querySelectorAll('mat-card.project-button-card');
+						matCards.forEach((card, index) => {
+							const titleEl = card.querySelector('span.project-button-title, .project-button-title');
+							if (titleEl) {
+								const title = titleEl.textContent.trim();
+								if (title && !seen.has(title) && !title.includes('새 노트') && !title.includes('만들기')) {
+									seen.add(title);
+									notebooks.push({
+										id: 'matcard-' + index,
+										title: title,
+										url: '',
+										cardIndex: index,
+										viewType: 'matcard'
+									});
+								}
+							}
+						});
+					}
+
+					// 방법 4: 클릭 가능한 노트북 항목 (href 포함)
 					if (notebooks.length === 0) {
 						document.querySelectorAll('a[href*="/notebook/"]').forEach(el => {
 							const href = el.getAttribute('href') || '';
@@ -639,16 +676,48 @@ export default class NotebookLMBridgePlugin extends Plugin {
 							if (match && !seen.has(match[1])) {
 								seen.add(match[1]);
 								const title = el.textContent.trim() || 'Untitled notebook';
-								notebooks.push({
-									id: match[1],
-									title: title,
-									url: 'https://notebooklm.google.com' + href
-								});
+								// "새 노트 만들기" 제외
+								if (!title.includes('새 노트') && !title.includes('만들기')) {
+									notebooks.push({
+										id: match[1],
+										title: title,
+										url: 'https://notebooklm.google.com' + href,
+										viewType: 'link'
+									});
+								}
 							}
 						});
 					}
 
-					console.log('[Bridge] Found notebooks:', notebooks);
+					// 방법 5: 제목 텍스트 기반 검색 (최후의 방법)
+					if (notebooks.length === 0) {
+						// "내 노트북" 섹션 찾기
+						const sections = document.querySelectorAll('[class*="section"], [class*="content"], main');
+						sections.forEach(section => {
+							const items = section.querySelectorAll('[role="button"], [role="listitem"], [class*="clickable"]');
+							items.forEach((item, index) => {
+								const text = item.textContent.trim();
+								// 날짜 패턴이 포함된 항목은 노트북일 가능성 높음
+								if (text && text.match(/\\d{4}.*\\d{1,2}.*\\d{1,2}/) && !seen.has(text.substring(0, 50))) {
+									// 첫 줄만 제목으로 사용
+									const lines = text.split('\\n');
+									const title = lines[0].trim();
+									if (title && !title.includes('새 노트') && !title.includes('만들기')) {
+										seen.add(title);
+										notebooks.push({
+											id: 'item-' + index,
+											title: title,
+											url: '',
+											itemIndex: index,
+											viewType: 'item'
+										});
+									}
+								}
+							});
+						});
+					}
+
+					console.log('[Bridge] Found notebooks:', notebooks, 'View type:', notebooks[0]?.viewType);
 					return notebooks;
 				})();
 			`);
@@ -672,25 +741,72 @@ export default class NotebookLMBridgePlugin extends Plugin {
 					if (selected.url) {
 						// URL이 있으면 직접 이동
 						view.webview.loadURL(selected.url);
-					} else if (selected.rowIndex !== undefined) {
-						// URL이 없으면 테이블 행 클릭
+					} else {
+						// viewType에 따라 다른 클릭 방식 사용
 						await view.webview.executeJavaScript(`
 							(function() {
 								const title = ${JSON.stringify(selected.title)};
-								// 제목으로 행 찾기
-								const titleEls = document.querySelectorAll('.project-table-title');
-								for (const el of titleEls) {
-									if (el.textContent.trim() === title) {
-										// 부모 행(tr) 찾아서 클릭
-										const row = el.closest('tr');
-										if (row) {
-											row.click();
-											console.log('[Bridge] Clicked row for:', title);
-											return true;
+								const viewType = ${JSON.stringify(selected.viewType || 'table')};
+
+								// 방법 1: 테이블 행 클릭 (모바일 뷰)
+								if (viewType === 'table') {
+									const titleEls = document.querySelectorAll('.project-table-title');
+									for (const el of titleEls) {
+										if (el.textContent.trim() === title) {
+											const row = el.closest('tr');
+											if (row) {
+												row.click();
+												console.log('[Bridge] Clicked table row for:', title);
+												return { success: true, method: 'table' };
+											}
 										}
 									}
 								}
-								return false;
+
+								// 방법 2: project-button 클릭 (PC 뷰 카드)
+								if (viewType === 'projectButton') {
+									const projectButtons = document.querySelectorAll('project-button.project-button');
+									for (const btn of projectButtons) {
+										const titleEl = btn.querySelector('span.project-button-title, .project-button-title');
+										if (titleEl && titleEl.textContent.trim() === title) {
+											// mat-card 또는 primary-action-button 클릭
+											const clickTarget = btn.querySelector('.primary-action-button, mat-card.project-button-card') || btn;
+											clickTarget.click();
+											console.log('[Bridge] Clicked project-button for:', title);
+											return { success: true, method: 'projectButton' };
+										}
+									}
+								}
+
+								// 방법 3: mat-card 클릭 (PC 뷰)
+								if (viewType === 'matcard') {
+									const matCards = document.querySelectorAll('mat-card.project-button-card');
+									for (const card of matCards) {
+										const titleEl = card.querySelector('span.project-button-title, .project-button-title');
+										if (titleEl && titleEl.textContent.trim() === title) {
+											const clickTarget = card.querySelector('.primary-action-button') || card;
+											clickTarget.click();
+											console.log('[Bridge] Clicked mat-card for:', title);
+											return { success: true, method: 'matcard' };
+										}
+									}
+								}
+
+								// 방법 4: 제목 텍스트로 클릭 가능한 요소 찾기 (폴백)
+								const allElements = document.querySelectorAll('*');
+								for (const el of allElements) {
+									if (el.textContent.trim() === title &&
+										(el.tagName === 'H2' || el.tagName === 'H3' ||
+										 el.className.includes('title') || el.closest('[role="button"]'))) {
+										// 클릭 가능한 부모 찾기
+										const clickable = el.closest('[role="button"], a, button, [class*="card"], [class*="item"], tr') || el;
+										clickable.click();
+										console.log('[Bridge] Clicked element for:', title, clickable.tagName);
+										return { success: true, method: 'fallback' };
+									}
+								}
+
+								return { success: false, error: 'Notebook not found: ' + title };
 							})();
 						`);
 					}
@@ -788,10 +904,59 @@ export default class NotebookLMBridgePlugin extends Plugin {
 	async addSourceToNotebook(view: NotebookLMView, note: NoteData) {
 		if (!view.webview) return;
 
+		// share_link가 있으면 링크로 등록, 없으면 텍스트로 등록
+		if (note.shareLink) {
+			new Notice(`"${note.title}" 링크 소스 추가 중...`);
+			await this.addLinkSourceToNotebook(view, note);
+			return;
+		}
+
 		const content = '# ' + note.title + '\n\n' + note.content;
-		new Notice(`"${note.title}" 소스 자동 추가 중...`);
+		new Notice(`"${note.title}" 텍스트 소스 추가 중...`);
 
 		try {
+			// Step 0: 모바일 뷰인 경우 "출처" 탭으로 전환
+			await view.webview.executeJavaScript(`
+				(function() {
+					// 탭 버튼 찾기 (출처, Sources, 소스)
+					const tabs = document.querySelectorAll('[role="tab"], button[class*="tab"], mat-tab-header button, .mat-mdc-tab');
+					for (const tab of tabs) {
+						const text = (tab.textContent || '').trim().toLowerCase();
+						if (text.includes('출처') || text.includes('sources') || text.includes('소스')) {
+							tab.click();
+							console.log('[Bridge] Switched to Sources tab');
+							return { success: true, tab: text };
+						}
+					}
+
+					// 네비게이션 바에서 찾기
+					const navItems = document.querySelectorAll('nav button, nav a, [class*="nav"] button');
+					for (const item of navItems) {
+						const text = (item.textContent || '').trim().toLowerCase();
+						if (text.includes('출처') || text.includes('sources') || text.includes('소스')) {
+							item.click();
+							console.log('[Bridge] Clicked nav item:', text);
+							return { success: true, nav: text };
+						}
+					}
+
+					// bottom-nav나 tab-bar 형태일 수 있음
+					const bottomNav = document.querySelectorAll('[class*="bottom-nav"] *, [class*="tab-bar"] *');
+					for (const item of bottomNav) {
+						const text = (item.textContent || '').trim().toLowerCase();
+						if (text.includes('출처') || text.includes('sources')) {
+							item.click();
+							return { success: true, bottomNav: text };
+						}
+					}
+
+					return { success: false, error: 'Sources tab not found (might be desktop view)' };
+				})();
+			`);
+
+			// 탭 전환 후 잠시 대기
+			await this.delay(800);
+
 			// Step 1: 소스 추가 버튼 클릭
 			const step1 = await view.webview.executeJavaScript(`
 				(function() {
@@ -830,59 +995,117 @@ export default class NotebookLMBridgePlugin extends Plugin {
 			`);
 			console.log('[NotebookLM Bridge] Step 1 (소스 추가 버튼):', step1);
 
-			// Step 2: 소스 업로드 모달에서 "복사된 텍스트" 옵션 찾아 클릭
+			// Step 2: 소스 업로드 모달에서 스크롤 후 "복사된 텍스트" 옵션 찾아 클릭
 			await this.delay(1500);
+
+			// 모달 내부 스크롤 - 여러 방법 시도
+			await view.webview.executeJavaScript(`
+				(function() {
+					// mat-bottom-sheet-container 내부의 스크롤 가능 영역 찾기
+					const bottomSheet = document.querySelector('mat-bottom-sheet-container');
+					if (bottomSheet) {
+						// bottom-sheet 자체를 스크롤
+						bottomSheet.scrollTop = bottomSheet.scrollHeight;
+						console.log('[Bridge] Scrolled mat-bottom-sheet-container');
+					}
+
+					// upload-dialog-panel 내부 스크롤
+					const panel = document.querySelector('.upload-dialog-panel');
+					if (panel) {
+						panel.scrollTop = panel.scrollHeight;
+						// 패널 내부의 모든 오버플로우 가능 요소 찾기
+						const scrollables = panel.querySelectorAll('*');
+						for (const el of scrollables) {
+							const style = window.getComputedStyle(el);
+							if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
+								el.scrollTop = el.scrollHeight;
+								console.log('[Bridge] Scrolled inner element:', el.className);
+							}
+						}
+					}
+
+					// cdk-overlay-pane 스크롤
+					const overlay = document.querySelector('.cdk-overlay-pane');
+					if (overlay) {
+						overlay.scrollTop = overlay.scrollHeight;
+					}
+				})();
+			`);
+
+			await this.delay(500);
+
+			// "텍스트 붙여넣기" 요소를 찾아서 scrollIntoView
+			await view.webview.executeJavaScript(`
+				(function() {
+					const allElements = document.querySelectorAll('*');
+					for (const el of allElements) {
+						const text = (el.textContent || '').trim();
+						if (text === '텍스트 붙여넣기' || text === 'Paste text') {
+							el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+							console.log('[Bridge] Scrolled to 텍스트 붙여넣기 via scrollIntoView');
+							return;
+						}
+					}
+					// 못 찾으면 "복사된 텍스트"로 시도
+					for (const el of allElements) {
+						const text = (el.textContent || '').trim();
+						if (text === '복사된 텍스트' || text === 'Copied text') {
+							el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+							console.log('[Bridge] Scrolled to 복사된 텍스트 via scrollIntoView');
+							return;
+						}
+					}
+				})();
+			`);
+
+			await this.delay(800);
 
 			const step2 = await view.webview.executeJavaScript(`
 				(function() {
-					// 모달 찾기
-					const modal = document.querySelector('.upload-dialog-panel, [role="dialog"], mat-bottom-sheet-container');
-					if (!modal) {
-						return { success: false, error: 'Modal not found' };
-					}
-
-					// 모달 내 모든 요소에서 "복사된 텍스트" 찾기
-					const allElements = modal.querySelectorAll('*');
+					// "복사된 텍스트" 직접 클릭 시도
+					const allElements = document.querySelectorAll('*');
 					for (const el of allElements) {
 						const text = (el.textContent || '').trim();
 						// 정확히 "복사된 텍스트" 매칭
 						if (text === '복사된 텍스트' || text === 'Copied text') {
 							el.click();
-							console.log('[Bridge] Clicked 복사된 텍스트');
+							console.log('[Bridge] Clicked 복사된 텍스트:', el.tagName, el.className);
 							return { success: true, clicked: text };
 						}
 					}
 
-					// "텍스트 붙여넣기" 섹션 클릭 시도
+					// "텍스트 붙여넣기" 섹션 클릭 (확장 필요할 수 있음)
 					for (const el of allElements) {
 						const text = (el.textContent || '').trim();
-						if (text === '텍스트 붙여넣기' || text.includes('텍스트 붙여넣기')) {
+						if (text === '텍스트 붙여넣기' || text === 'Paste text') {
 							el.click();
-							console.log('[Bridge] Clicked 텍스트 붙여넣기 section');
+							console.log('[Bridge] Clicked 텍스트 붙여넣기:', el.tagName);
 							return { success: true, clicked: text, needsSecondClick: true };
 						}
 					}
 
-					return { success: false, error: 'Text paste option not found' };
+					return { success: false, error: 'Text paste option not found in DOM' };
 				})();
 			`);
 			console.log('[NotebookLM Bridge] Step 2 (복사된 텍스트 옵션):', step2);
 
-			// Step 2.5: "텍스트 붙여넣기" 클릭 후 "복사된 텍스트" 클릭 필요할 수 있음
+			// Step 2.5: "텍스트 붙여넣기" 클릭 후 "복사된 텍스트" 클릭 필요
 			if (step2?.needsSecondClick) {
-				await this.delay(500);
+				await this.delay(800);
 				await view.webview.executeJavaScript(`
 					(function() {
-						const modal = document.querySelector('.upload-dialog-panel, [role="dialog"], mat-bottom-sheet-container');
-						if (!modal) return;
+						const modal = document.querySelector('.upload-dialog-panel, mat-bottom-sheet-container, [role="dialog"]');
+						if (!modal) return { success: false };
 						const allElements = modal.querySelectorAll('*');
 						for (const el of allElements) {
 							const text = (el.textContent || '').trim();
 							if (text === '복사된 텍스트' || text === 'Copied text') {
 								el.click();
+								console.log('[Bridge] Step 2.5: Clicked 복사된 텍스트');
 								return { success: true };
 							}
 						}
+						return { success: false };
 					})();
 				`);
 			}
@@ -962,6 +1185,203 @@ export default class NotebookLMBridgePlugin extends Plugin {
 				new Notice(`📋 "${note.title}" 클립보드에 복사됨.\n\n수동으로 붙여넣기 해주세요.`, 8000);
 			} catch (e) {
 				new Notice('소스 추가에 실패했습니다.', 5000);
+			}
+		}
+	}
+
+	// 링크 소스 추가 (share_link가 있는 노트용)
+	async addLinkSourceToNotebook(view: NotebookLMView, note: NoteData) {
+		if (!view.webview || !note.shareLink) return;
+
+		try {
+			// Step 0: 모바일 뷰인 경우 "출처" 탭으로 전환
+			await view.webview.executeJavaScript(`
+				(function() {
+					const tabs = document.querySelectorAll('[role="tab"], button[class*="tab"], .mat-mdc-tab');
+					for (const tab of tabs) {
+						const text = (tab.textContent || '').trim().toLowerCase();
+						if (text.includes('출처') || text.includes('sources') || text.includes('소스')) {
+							tab.click();
+							return { success: true, tab: text };
+						}
+					}
+					return { success: false };
+				})();
+			`);
+			await this.delay(800);
+
+			// Step 1: 소스 추가 버튼 클릭
+			const step1 = await view.webview.executeJavaScript(`
+				(function() {
+					const selectors = [
+						'button[aria-label="출처 추가"]',
+						'button[aria-label="소스 추가"]',
+						'button.add-source-button',
+						'button[aria-label="업로드 소스 대화상자 열기"]'
+					];
+					for (const sel of selectors) {
+						const btn = document.querySelector(sel);
+						if (btn && !btn.disabled) {
+							btn.click();
+							return { success: true, selector: sel };
+						}
+					}
+					// 텍스트로 찾기
+					const buttons = document.querySelectorAll('button');
+					for (const btn of buttons) {
+						const text = (btn.textContent || '').trim();
+						if (text.includes('소스 추가') || text.includes('소스 업로드')) {
+							btn.click();
+							return { success: true, text: text };
+						}
+					}
+					return { success: false, error: 'Source add button not found' };
+				})();
+			`);
+			console.log('[NotebookLM Bridge] Link Step 1 (소스 추가 버튼):', step1);
+
+			await this.delay(1500);
+
+			// Step 2: "링크" 섹션 클릭
+			await view.webview.executeJavaScript(`
+				(function() {
+					const m = document.querySelector('mat-bottom-sheet-container, .upload-dialog-panel');
+					if (m) m.scrollTop = m.scrollHeight;
+					for (const el of document.querySelectorAll('*')) {
+						const text = (el.textContent || '').trim();
+						if (text === '링크' || text === '웹사이트') {
+							el.scrollIntoView({ block: 'center' });
+							break;
+						}
+					}
+				})();
+			`);
+			await this.delay(500);
+
+			const step2 = await view.webview.executeJavaScript(`
+				(function() {
+					for (const el of document.querySelectorAll('*')) {
+						const text = (el.textContent || '').trim();
+						if (text === '링크') {
+							el.click();
+							return { success: true, tag: el.tagName };
+						}
+					}
+					return { success: false, error: '링크 option not found' };
+				})();
+			`);
+			console.log('[NotebookLM Bridge] Link Step 2 (링크 클릭):', step2);
+
+			await this.delay(1000);
+
+			// Step 3: "웹사이트" 클릭
+			const step3 = await view.webview.executeJavaScript(`
+				(function() {
+					for (const el of document.querySelectorAll('span, div, button, a')) {
+						const text = (el.textContent || '').trim();
+						if (text === '웹사이트' || text === 'Website') {
+							el.click();
+							return { success: true, tag: el.tagName };
+						}
+					}
+					return { success: false, error: '웹사이트 option not found' };
+				})();
+			`);
+			console.log('[NotebookLM Bridge] Link Step 3 (웹사이트 클릭):', step3);
+
+			await this.delay(2000);
+
+			// Step 4: URL textarea 찾아서 입력
+			const shareLink = note.shareLink;
+			const step4 = await view.webview.executeJavaScript(`
+				(function() {
+					const url = ${JSON.stringify(shareLink)};
+
+					// textarea 찾기 (웹사이트 URL 다이얼로그)
+					const dialogs = document.querySelectorAll('mat-dialog-container, [role="dialog"], .cdk-overlay-pane');
+					for (const dialog of dialogs) {
+						const text = (dialog.textContent || '');
+						if (text.includes('웹사이트 URL') || text.includes('URL 붙여넣기')) {
+							const ta = dialog.querySelector('textarea');
+							if (ta && ta.offsetParent !== null) {
+								ta.focus();
+								ta.value = url;
+								ta.dispatchEvent(new Event('input', { bubbles: true }));
+								ta.dispatchEvent(new Event('change', { bubbles: true }));
+								return { success: true, method: 'dialog textarea' };
+							}
+						}
+					}
+
+					// placeholder로 찾기
+					const textareas = document.querySelectorAll('textarea');
+					for (const ta of textareas) {
+						const placeholder = (ta.placeholder || '').toLowerCase();
+						if (placeholder.includes('url') || placeholder.includes('붙여넣기')) {
+							if (ta.offsetParent !== null) {
+								ta.focus();
+								ta.value = url;
+								ta.dispatchEvent(new Event('input', { bubbles: true }));
+								ta.dispatchEvent(new Event('change', { bubbles: true }));
+								return { success: true, method: 'placeholder textarea' };
+							}
+						}
+					}
+
+					// 아무 visible textarea
+					for (const ta of textareas) {
+						if (ta.offsetParent !== null) {
+							ta.focus();
+							ta.value = url;
+							ta.dispatchEvent(new Event('input', { bubbles: true }));
+							ta.dispatchEvent(new Event('change', { bubbles: true }));
+							return { success: true, method: 'any visible textarea' };
+						}
+					}
+
+					return { success: false, error: 'URL textarea not found' };
+				})();
+			`);
+			console.log('[NotebookLM Bridge] Link Step 4 (URL 입력):', step4);
+
+			await this.delay(1000);
+
+			// Step 5: "삽입" 버튼 클릭
+			const step5 = await view.webview.executeJavaScript(`
+				(function() {
+					const buttons = document.querySelectorAll('button');
+					for (const btn of buttons) {
+						const text = (btn.textContent || '').trim();
+						if (text === '삽입' || text === 'Insert') {
+							if (!btn.disabled) {
+								btn.click();
+								return { success: true };
+							} else {
+								return { success: false, error: '삽입 button is disabled' };
+							}
+						}
+					}
+					return { success: false, error: '삽입 button not found' };
+				})();
+			`);
+			console.log('[NotebookLM Bridge] Link Step 5 (삽입 버튼):', step5);
+
+			if (step4?.success && step5?.success) {
+				new Notice(`✅ "${note.title}" 링크 소스가 추가되었습니다!\n(${note.shareLink})`, 5000);
+			} else if (step4?.success) {
+				new Notice(`📝 URL 입력 완료!\n"삽입" 버튼을 클릭해주세요.`, 5000);
+			} else {
+				await navigator.clipboard.writeText(note.shareLink);
+				new Notice(`📋 자동 입력 실패. URL이 클립보드에 복사됨.\n\n${note.shareLink}`, 8000);
+			}
+
+		} catch (error) {
+			console.error('[NotebookLM Bridge] Link source add failed:', error);
+			try {
+				await navigator.clipboard.writeText(note.shareLink!);
+				new Notice(`📋 "${note.title}" URL이 클립보드에 복사됨.\n\n수동으로 붙여넣기 해주세요.`, 8000);
+			} catch (e) {
+				new Notice('링크 소스 추가에 실패했습니다.', 5000);
 			}
 		}
 	}

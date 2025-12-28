@@ -346,22 +346,27 @@ var NotebookLMBridgePlugin = class extends import_obsidian.Plugin {
     return await this.getFileContent(activeView.file);
   }
   async getFileContent(file) {
-    var _a;
+    var _a, _b;
     let content = await this.app.vault.read(file);
+    const cache = this.app.metadataCache.getFileCache(file);
+    let shareLink;
+    if ((_a = cache == null ? void 0 : cache.frontmatter) == null ? void 0 : _a.share_link) {
+      shareLink = cache.frontmatter.share_link;
+    }
     if (!this.settings.includeFrontmatter) {
       content = content.replace(/^---\n[\s\S]*?\n---\n/, "");
     }
     const note = {
       title: file.basename,
       content: content.trim(),
-      path: file.path
+      path: file.path,
+      shareLink
     };
     if (this.settings.includeMetadata) {
-      const cache = this.app.metadataCache.getFileCache(file);
       note.metadata = {
         created: file.stat.ctime,
         modified: file.stat.mtime,
-        tags: ((_a = cache == null ? void 0 : cache.tags) == null ? void 0 : _a.map((t) => t.tag)) || []
+        tags: ((_b = cache == null ? void 0 : cache.tags) == null ? void 0 : _b.map((t) => t.tag)) || []
       };
     }
     return note;
@@ -476,7 +481,7 @@ var NotebookLMBridgePlugin = class extends import_obsidian.Plugin {
 					const notebooks = [];
 					const seen = new Set();
 
-					// \uBC29\uBC95 1: project-table\uC5D0\uC11C \uB178\uD2B8\uBD81 \uC81C\uBAA9 \uAC00\uC838\uC624\uAE30
+					// \uBC29\uBC95 1: project-table\uC5D0\uC11C \uB178\uD2B8\uBD81 \uC81C\uBAA9 \uAC00\uC838\uC624\uAE30 (\uBAA8\uBC14\uC77C/\uC881\uC740 \uD654\uBA74)
 					const table = document.querySelector('table.project-table');
 					if (table) {
 						const rows = table.querySelectorAll('tbody tr, tr');
@@ -489,31 +494,60 @@ var NotebookLMBridgePlugin = class extends import_obsidian.Plugin {
 									notebooks.push({
 										id: 'row-' + index,
 										title: title,
-										url: '',  // URL \uC5C6\uC74C, \uD589 \uD074\uB9AD\uC73C\uB85C \uC774\uB3D9
-										rowIndex: index
+										url: '',
+										rowIndex: index,
+										viewType: 'table'
 									});
 								}
 							}
 						});
 					}
 
-					// \uBC29\uBC95 2: project-table-title \uC2A4\uD32C \uC9C1\uC811 \uCC3E\uAE30
+					// \uBC29\uBC95 2: PC \uBDF0 \uCE74\uB4DC \uB808\uC774\uC544\uC6C3 - project-button \uC694\uC18C (\uB113\uC740 \uD654\uBA74)
 					if (notebooks.length === 0) {
-						document.querySelectorAll('.project-table-title, span[class*="project-table-title"]').forEach((el, index) => {
-							const title = el.textContent.trim();
-							if (title && !seen.has(title)) {
-								seen.add(title);
-								notebooks.push({
-									id: 'title-' + index,
-									title: title,
-									url: '',
-									rowIndex: index
-								});
+						// project-button \uC694\uC18C\uB4E4 \uCC3E\uAE30 (PC \uCE74\uB4DC \uBDF0\uC758 \uBA54\uC778 \uCEE8\uD14C\uC774\uB108)
+						const projectButtons = document.querySelectorAll('project-button.project-button');
+						projectButtons.forEach((btn, index) => {
+							// span.project-button-title\uC5D0\uC11C \uC81C\uBAA9 \uCD94\uCD9C
+							const titleEl = btn.querySelector('span.project-button-title, .project-button-title');
+							if (titleEl) {
+								const title = titleEl.textContent.trim();
+								if (title && !seen.has(title) && !title.includes('\uC0C8 \uB178\uD2B8') && !title.includes('\uB9CC\uB4E4\uAE30')) {
+									seen.add(title);
+									notebooks.push({
+										id: 'projectbtn-' + index,
+										title: title,
+										url: '',
+										cardIndex: index,
+										viewType: 'projectButton'
+									});
+								}
 							}
 						});
 					}
 
-					// \uBC29\uBC95 3: a[href*="/notebook/"] \uB9C1\uD06C \uCC3E\uAE30 (\uC774\uC804 \uBC29\uC2DD)
+					// \uBC29\uBC95 3: mat-card.project-button-card \uCC3E\uAE30
+					if (notebooks.length === 0) {
+						const matCards = document.querySelectorAll('mat-card.project-button-card');
+						matCards.forEach((card, index) => {
+							const titleEl = card.querySelector('span.project-button-title, .project-button-title');
+							if (titleEl) {
+								const title = titleEl.textContent.trim();
+								if (title && !seen.has(title) && !title.includes('\uC0C8 \uB178\uD2B8') && !title.includes('\uB9CC\uB4E4\uAE30')) {
+									seen.add(title);
+									notebooks.push({
+										id: 'matcard-' + index,
+										title: title,
+										url: '',
+										cardIndex: index,
+										viewType: 'matcard'
+									});
+								}
+							}
+						});
+					}
+
+					// \uBC29\uBC95 4: \uD074\uB9AD \uAC00\uB2A5\uD55C \uB178\uD2B8\uBD81 \uD56D\uBAA9 (href \uD3EC\uD568)
 					if (notebooks.length === 0) {
 						document.querySelectorAll('a[href*="/notebook/"]').forEach(el => {
 							const href = el.getAttribute('href') || '';
@@ -521,16 +555,48 @@ var NotebookLMBridgePlugin = class extends import_obsidian.Plugin {
 							if (match && !seen.has(match[1])) {
 								seen.add(match[1]);
 								const title = el.textContent.trim() || 'Untitled notebook';
-								notebooks.push({
-									id: match[1],
-									title: title,
-									url: 'https://notebooklm.google.com' + href
-								});
+								// "\uC0C8 \uB178\uD2B8 \uB9CC\uB4E4\uAE30" \uC81C\uC678
+								if (!title.includes('\uC0C8 \uB178\uD2B8') && !title.includes('\uB9CC\uB4E4\uAE30')) {
+									notebooks.push({
+										id: match[1],
+										title: title,
+										url: 'https://notebooklm.google.com' + href,
+										viewType: 'link'
+									});
+								}
 							}
 						});
 					}
 
-					console.log('[Bridge] Found notebooks:', notebooks);
+					// \uBC29\uBC95 5: \uC81C\uBAA9 \uD14D\uC2A4\uD2B8 \uAE30\uBC18 \uAC80\uC0C9 (\uCD5C\uD6C4\uC758 \uBC29\uBC95)
+					if (notebooks.length === 0) {
+						// "\uB0B4 \uB178\uD2B8\uBD81" \uC139\uC158 \uCC3E\uAE30
+						const sections = document.querySelectorAll('[class*="section"], [class*="content"], main');
+						sections.forEach(section => {
+							const items = section.querySelectorAll('[role="button"], [role="listitem"], [class*="clickable"]');
+							items.forEach((item, index) => {
+								const text = item.textContent.trim();
+								// \uB0A0\uC9DC \uD328\uD134\uC774 \uD3EC\uD568\uB41C \uD56D\uBAA9\uC740 \uB178\uD2B8\uBD81\uC77C \uAC00\uB2A5\uC131 \uB192\uC74C
+								if (text && text.match(/\\d{4}.*\\d{1,2}.*\\d{1,2}/) && !seen.has(text.substring(0, 50))) {
+									// \uCCAB \uC904\uB9CC \uC81C\uBAA9\uC73C\uB85C \uC0AC\uC6A9
+									const lines = text.split('\\n');
+									const title = lines[0].trim();
+									if (title && !title.includes('\uC0C8 \uB178\uD2B8') && !title.includes('\uB9CC\uB4E4\uAE30')) {
+										seen.add(title);
+										notebooks.push({
+											id: 'item-' + index,
+											title: title,
+											url: '',
+											itemIndex: index,
+											viewType: 'item'
+										});
+									}
+								}
+							});
+						});
+					}
+
+					console.log('[Bridge] Found notebooks:', notebooks, 'View type:', notebooks[0]?.viewType);
 					return notebooks;
 				})();
 			`);
@@ -549,24 +615,71 @@ var NotebookLMBridgePlugin = class extends import_obsidian.Plugin {
         if (view && view.webview) {
           if (selected.url) {
             view.webview.loadURL(selected.url);
-          } else if (selected.rowIndex !== void 0) {
+          } else {
             await view.webview.executeJavaScript(`
 							(function() {
 								const title = ${JSON.stringify(selected.title)};
-								// \uC81C\uBAA9\uC73C\uB85C \uD589 \uCC3E\uAE30
-								const titleEls = document.querySelectorAll('.project-table-title');
-								for (const el of titleEls) {
-									if (el.textContent.trim() === title) {
-										// \uBD80\uBAA8 \uD589(tr) \uCC3E\uC544\uC11C \uD074\uB9AD
-										const row = el.closest('tr');
-										if (row) {
-											row.click();
-											console.log('[Bridge] Clicked row for:', title);
-											return true;
+								const viewType = ${JSON.stringify(selected.viewType || "table")};
+
+								// \uBC29\uBC95 1: \uD14C\uC774\uBE14 \uD589 \uD074\uB9AD (\uBAA8\uBC14\uC77C \uBDF0)
+								if (viewType === 'table') {
+									const titleEls = document.querySelectorAll('.project-table-title');
+									for (const el of titleEls) {
+										if (el.textContent.trim() === title) {
+											const row = el.closest('tr');
+											if (row) {
+												row.click();
+												console.log('[Bridge] Clicked table row for:', title);
+												return { success: true, method: 'table' };
+											}
 										}
 									}
 								}
-								return false;
+
+								// \uBC29\uBC95 2: project-button \uD074\uB9AD (PC \uBDF0 \uCE74\uB4DC)
+								if (viewType === 'projectButton') {
+									const projectButtons = document.querySelectorAll('project-button.project-button');
+									for (const btn of projectButtons) {
+										const titleEl = btn.querySelector('span.project-button-title, .project-button-title');
+										if (titleEl && titleEl.textContent.trim() === title) {
+											// mat-card \uB610\uB294 primary-action-button \uD074\uB9AD
+											const clickTarget = btn.querySelector('.primary-action-button, mat-card.project-button-card') || btn;
+											clickTarget.click();
+											console.log('[Bridge] Clicked project-button for:', title);
+											return { success: true, method: 'projectButton' };
+										}
+									}
+								}
+
+								// \uBC29\uBC95 3: mat-card \uD074\uB9AD (PC \uBDF0)
+								if (viewType === 'matcard') {
+									const matCards = document.querySelectorAll('mat-card.project-button-card');
+									for (const card of matCards) {
+										const titleEl = card.querySelector('span.project-button-title, .project-button-title');
+										if (titleEl && titleEl.textContent.trim() === title) {
+											const clickTarget = card.querySelector('.primary-action-button') || card;
+											clickTarget.click();
+											console.log('[Bridge] Clicked mat-card for:', title);
+											return { success: true, method: 'matcard' };
+										}
+									}
+								}
+
+								// \uBC29\uBC95 4: \uC81C\uBAA9 \uD14D\uC2A4\uD2B8\uB85C \uD074\uB9AD \uAC00\uB2A5\uD55C \uC694\uC18C \uCC3E\uAE30 (\uD3F4\uBC31)
+								const allElements = document.querySelectorAll('*');
+								for (const el of allElements) {
+									if (el.textContent.trim() === title &&
+										(el.tagName === 'H2' || el.tagName === 'H3' ||
+										 el.className.includes('title') || el.closest('[role="button"]'))) {
+										// \uD074\uB9AD \uAC00\uB2A5\uD55C \uBD80\uBAA8 \uCC3E\uAE30
+										const clickable = el.closest('[role="button"], a, button, [class*="card"], [class*="item"], tr') || el;
+										clickable.click();
+										console.log('[Bridge] Clicked element for:', title, clickable.tagName);
+										return { success: true, method: 'fallback' };
+									}
+								}
+
+								return { success: false, error: 'Notebook not found: ' + title };
 							})();
 						`);
           }
@@ -651,9 +764,52 @@ var NotebookLMBridgePlugin = class extends import_obsidian.Plugin {
   async addSourceToNotebook(view, note) {
     if (!view.webview)
       return;
+    if (note.shareLink) {
+      new import_obsidian.Notice(`"${note.title}" \uB9C1\uD06C \uC18C\uC2A4 \uCD94\uAC00 \uC911...`);
+      await this.addLinkSourceToNotebook(view, note);
+      return;
+    }
     const content = "# " + note.title + "\n\n" + note.content;
-    new import_obsidian.Notice(`"${note.title}" \uC18C\uC2A4 \uC790\uB3D9 \uCD94\uAC00 \uC911...`);
+    new import_obsidian.Notice(`"${note.title}" \uD14D\uC2A4\uD2B8 \uC18C\uC2A4 \uCD94\uAC00 \uC911...`);
     try {
+      await view.webview.executeJavaScript(`
+				(function() {
+					// \uD0ED \uBC84\uD2BC \uCC3E\uAE30 (\uCD9C\uCC98, Sources, \uC18C\uC2A4)
+					const tabs = document.querySelectorAll('[role="tab"], button[class*="tab"], mat-tab-header button, .mat-mdc-tab');
+					for (const tab of tabs) {
+						const text = (tab.textContent || '').trim().toLowerCase();
+						if (text.includes('\uCD9C\uCC98') || text.includes('sources') || text.includes('\uC18C\uC2A4')) {
+							tab.click();
+							console.log('[Bridge] Switched to Sources tab');
+							return { success: true, tab: text };
+						}
+					}
+
+					// \uB124\uBE44\uAC8C\uC774\uC158 \uBC14\uC5D0\uC11C \uCC3E\uAE30
+					const navItems = document.querySelectorAll('nav button, nav a, [class*="nav"] button');
+					for (const item of navItems) {
+						const text = (item.textContent || '').trim().toLowerCase();
+						if (text.includes('\uCD9C\uCC98') || text.includes('sources') || text.includes('\uC18C\uC2A4')) {
+							item.click();
+							console.log('[Bridge] Clicked nav item:', text);
+							return { success: true, nav: text };
+						}
+					}
+
+					// bottom-nav\uB098 tab-bar \uD615\uD0DC\uC77C \uC218 \uC788\uC74C
+					const bottomNav = document.querySelectorAll('[class*="bottom-nav"] *, [class*="tab-bar"] *');
+					for (const item of bottomNav) {
+						const text = (item.textContent || '').trim().toLowerCase();
+						if (text.includes('\uCD9C\uCC98') || text.includes('sources')) {
+							item.click();
+							return { success: true, bottomNav: text };
+						}
+					}
+
+					return { success: false, error: 'Sources tab not found (might be desktop view)' };
+				})();
+			`);
+      await this.delay(800);
       const step1 = await view.webview.executeJavaScript(`
 				(function() {
 					// \uC5EC\uB7EC \uC140\uB809\uD130 \uC2DC\uB3C4
@@ -691,54 +847,106 @@ var NotebookLMBridgePlugin = class extends import_obsidian.Plugin {
 			`);
       console.log("[NotebookLM Bridge] Step 1 (\uC18C\uC2A4 \uCD94\uAC00 \uBC84\uD2BC):", step1);
       await this.delay(1500);
-      const step2 = await view.webview.executeJavaScript(`
+      await view.webview.executeJavaScript(`
 				(function() {
-					// \uBAA8\uB2EC \uCC3E\uAE30
-					const modal = document.querySelector('.upload-dialog-panel, [role="dialog"], mat-bottom-sheet-container');
-					if (!modal) {
-						return { success: false, error: 'Modal not found' };
+					// mat-bottom-sheet-container \uB0B4\uBD80\uC758 \uC2A4\uD06C\uB864 \uAC00\uB2A5 \uC601\uC5ED \uCC3E\uAE30
+					const bottomSheet = document.querySelector('mat-bottom-sheet-container');
+					if (bottomSheet) {
+						// bottom-sheet \uC790\uCCB4\uB97C \uC2A4\uD06C\uB864
+						bottomSheet.scrollTop = bottomSheet.scrollHeight;
+						console.log('[Bridge] Scrolled mat-bottom-sheet-container');
 					}
 
-					// \uBAA8\uB2EC \uB0B4 \uBAA8\uB4E0 \uC694\uC18C\uC5D0\uC11C "\uBCF5\uC0AC\uB41C \uD14D\uC2A4\uD2B8" \uCC3E\uAE30
-					const allElements = modal.querySelectorAll('*');
+					// upload-dialog-panel \uB0B4\uBD80 \uC2A4\uD06C\uB864
+					const panel = document.querySelector('.upload-dialog-panel');
+					if (panel) {
+						panel.scrollTop = panel.scrollHeight;
+						// \uD328\uB110 \uB0B4\uBD80\uC758 \uBAA8\uB4E0 \uC624\uBC84\uD50C\uB85C\uC6B0 \uAC00\uB2A5 \uC694\uC18C \uCC3E\uAE30
+						const scrollables = panel.querySelectorAll('*');
+						for (const el of scrollables) {
+							const style = window.getComputedStyle(el);
+							if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
+								el.scrollTop = el.scrollHeight;
+								console.log('[Bridge] Scrolled inner element:', el.className);
+							}
+						}
+					}
+
+					// cdk-overlay-pane \uC2A4\uD06C\uB864
+					const overlay = document.querySelector('.cdk-overlay-pane');
+					if (overlay) {
+						overlay.scrollTop = overlay.scrollHeight;
+					}
+				})();
+			`);
+      await this.delay(500);
+      await view.webview.executeJavaScript(`
+				(function() {
+					const allElements = document.querySelectorAll('*');
+					for (const el of allElements) {
+						const text = (el.textContent || '').trim();
+						if (text === '\uD14D\uC2A4\uD2B8 \uBD99\uC5EC\uB123\uAE30' || text === 'Paste text') {
+							el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+							console.log('[Bridge] Scrolled to \uD14D\uC2A4\uD2B8 \uBD99\uC5EC\uB123\uAE30 via scrollIntoView');
+							return;
+						}
+					}
+					// \uBABB \uCC3E\uC73C\uBA74 "\uBCF5\uC0AC\uB41C \uD14D\uC2A4\uD2B8"\uB85C \uC2DC\uB3C4
+					for (const el of allElements) {
+						const text = (el.textContent || '').trim();
+						if (text === '\uBCF5\uC0AC\uB41C \uD14D\uC2A4\uD2B8' || text === 'Copied text') {
+							el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+							console.log('[Bridge] Scrolled to \uBCF5\uC0AC\uB41C \uD14D\uC2A4\uD2B8 via scrollIntoView');
+							return;
+						}
+					}
+				})();
+			`);
+      await this.delay(800);
+      const step2 = await view.webview.executeJavaScript(`
+				(function() {
+					// "\uBCF5\uC0AC\uB41C \uD14D\uC2A4\uD2B8" \uC9C1\uC811 \uD074\uB9AD \uC2DC\uB3C4
+					const allElements = document.querySelectorAll('*');
 					for (const el of allElements) {
 						const text = (el.textContent || '').trim();
 						// \uC815\uD655\uD788 "\uBCF5\uC0AC\uB41C \uD14D\uC2A4\uD2B8" \uB9E4\uCE6D
 						if (text === '\uBCF5\uC0AC\uB41C \uD14D\uC2A4\uD2B8' || text === 'Copied text') {
 							el.click();
-							console.log('[Bridge] Clicked \uBCF5\uC0AC\uB41C \uD14D\uC2A4\uD2B8');
+							console.log('[Bridge] Clicked \uBCF5\uC0AC\uB41C \uD14D\uC2A4\uD2B8:', el.tagName, el.className);
 							return { success: true, clicked: text };
 						}
 					}
 
-					// "\uD14D\uC2A4\uD2B8 \uBD99\uC5EC\uB123\uAE30" \uC139\uC158 \uD074\uB9AD \uC2DC\uB3C4
+					// "\uD14D\uC2A4\uD2B8 \uBD99\uC5EC\uB123\uAE30" \uC139\uC158 \uD074\uB9AD (\uD655\uC7A5 \uD544\uC694\uD560 \uC218 \uC788\uC74C)
 					for (const el of allElements) {
 						const text = (el.textContent || '').trim();
-						if (text === '\uD14D\uC2A4\uD2B8 \uBD99\uC5EC\uB123\uAE30' || text.includes('\uD14D\uC2A4\uD2B8 \uBD99\uC5EC\uB123\uAE30')) {
+						if (text === '\uD14D\uC2A4\uD2B8 \uBD99\uC5EC\uB123\uAE30' || text === 'Paste text') {
 							el.click();
-							console.log('[Bridge] Clicked \uD14D\uC2A4\uD2B8 \uBD99\uC5EC\uB123\uAE30 section');
+							console.log('[Bridge] Clicked \uD14D\uC2A4\uD2B8 \uBD99\uC5EC\uB123\uAE30:', el.tagName);
 							return { success: true, clicked: text, needsSecondClick: true };
 						}
 					}
 
-					return { success: false, error: 'Text paste option not found' };
+					return { success: false, error: 'Text paste option not found in DOM' };
 				})();
 			`);
       console.log("[NotebookLM Bridge] Step 2 (\uBCF5\uC0AC\uB41C \uD14D\uC2A4\uD2B8 \uC635\uC158):", step2);
       if (step2 == null ? void 0 : step2.needsSecondClick) {
-        await this.delay(500);
+        await this.delay(800);
         await view.webview.executeJavaScript(`
 					(function() {
-						const modal = document.querySelector('.upload-dialog-panel, [role="dialog"], mat-bottom-sheet-container');
-						if (!modal) return;
+						const modal = document.querySelector('.upload-dialog-panel, mat-bottom-sheet-container, [role="dialog"]');
+						if (!modal) return { success: false };
 						const allElements = modal.querySelectorAll('*');
 						for (const el of allElements) {
 							const text = (el.textContent || '').trim();
 							if (text === '\uBCF5\uC0AC\uB41C \uD14D\uC2A4\uD2B8' || text === 'Copied text') {
 								el.click();
+								console.log('[Bridge] Step 2.5: Clicked \uBCF5\uC0AC\uB41C \uD14D\uC2A4\uD2B8');
 								return { success: true };
 							}
 						}
+						return { success: false };
 					})();
 				`);
       }
@@ -814,6 +1022,190 @@ Cmd+V\uB85C \uBD99\uC5EC\uB123\uAE30 \uD6C4 \uC0BD\uC785 \uD074\uB9AD`, 8e3);
 \uC218\uB3D9\uC73C\uB85C \uBD99\uC5EC\uB123\uAE30 \uD574\uC8FC\uC138\uC694.`, 8e3);
       } catch (e) {
         new import_obsidian.Notice("\uC18C\uC2A4 \uCD94\uAC00\uC5D0 \uC2E4\uD328\uD588\uC2B5\uB2C8\uB2E4.", 5e3);
+      }
+    }
+  }
+  // 링크 소스 추가 (share_link가 있는 노트용)
+  async addLinkSourceToNotebook(view, note) {
+    if (!view.webview || !note.shareLink)
+      return;
+    try {
+      await view.webview.executeJavaScript(`
+				(function() {
+					const tabs = document.querySelectorAll('[role="tab"], button[class*="tab"], .mat-mdc-tab');
+					for (const tab of tabs) {
+						const text = (tab.textContent || '').trim().toLowerCase();
+						if (text.includes('\uCD9C\uCC98') || text.includes('sources') || text.includes('\uC18C\uC2A4')) {
+							tab.click();
+							return { success: true, tab: text };
+						}
+					}
+					return { success: false };
+				})();
+			`);
+      await this.delay(800);
+      const step1 = await view.webview.executeJavaScript(`
+				(function() {
+					const selectors = [
+						'button[aria-label="\uCD9C\uCC98 \uCD94\uAC00"]',
+						'button[aria-label="\uC18C\uC2A4 \uCD94\uAC00"]',
+						'button.add-source-button',
+						'button[aria-label="\uC5C5\uB85C\uB4DC \uC18C\uC2A4 \uB300\uD654\uC0C1\uC790 \uC5F4\uAE30"]'
+					];
+					for (const sel of selectors) {
+						const btn = document.querySelector(sel);
+						if (btn && !btn.disabled) {
+							btn.click();
+							return { success: true, selector: sel };
+						}
+					}
+					// \uD14D\uC2A4\uD2B8\uB85C \uCC3E\uAE30
+					const buttons = document.querySelectorAll('button');
+					for (const btn of buttons) {
+						const text = (btn.textContent || '').trim();
+						if (text.includes('\uC18C\uC2A4 \uCD94\uAC00') || text.includes('\uC18C\uC2A4 \uC5C5\uB85C\uB4DC')) {
+							btn.click();
+							return { success: true, text: text };
+						}
+					}
+					return { success: false, error: 'Source add button not found' };
+				})();
+			`);
+      console.log("[NotebookLM Bridge] Link Step 1 (\uC18C\uC2A4 \uCD94\uAC00 \uBC84\uD2BC):", step1);
+      await this.delay(1500);
+      await view.webview.executeJavaScript(`
+				(function() {
+					const m = document.querySelector('mat-bottom-sheet-container, .upload-dialog-panel');
+					if (m) m.scrollTop = m.scrollHeight;
+					for (const el of document.querySelectorAll('*')) {
+						const text = (el.textContent || '').trim();
+						if (text === '\uB9C1\uD06C' || text === '\uC6F9\uC0AC\uC774\uD2B8') {
+							el.scrollIntoView({ block: 'center' });
+							break;
+						}
+					}
+				})();
+			`);
+      await this.delay(500);
+      const step2 = await view.webview.executeJavaScript(`
+				(function() {
+					for (const el of document.querySelectorAll('*')) {
+						const text = (el.textContent || '').trim();
+						if (text === '\uB9C1\uD06C') {
+							el.click();
+							return { success: true, tag: el.tagName };
+						}
+					}
+					return { success: false, error: '\uB9C1\uD06C option not found' };
+				})();
+			`);
+      console.log("[NotebookLM Bridge] Link Step 2 (\uB9C1\uD06C \uD074\uB9AD):", step2);
+      await this.delay(1e3);
+      const step3 = await view.webview.executeJavaScript(`
+				(function() {
+					for (const el of document.querySelectorAll('span, div, button, a')) {
+						const text = (el.textContent || '').trim();
+						if (text === '\uC6F9\uC0AC\uC774\uD2B8' || text === 'Website') {
+							el.click();
+							return { success: true, tag: el.tagName };
+						}
+					}
+					return { success: false, error: '\uC6F9\uC0AC\uC774\uD2B8 option not found' };
+				})();
+			`);
+      console.log("[NotebookLM Bridge] Link Step 3 (\uC6F9\uC0AC\uC774\uD2B8 \uD074\uB9AD):", step3);
+      await this.delay(2e3);
+      const shareLink = note.shareLink;
+      const step4 = await view.webview.executeJavaScript(`
+				(function() {
+					const url = ${JSON.stringify(shareLink)};
+
+					// textarea \uCC3E\uAE30 (\uC6F9\uC0AC\uC774\uD2B8 URL \uB2E4\uC774\uC5BC\uB85C\uADF8)
+					const dialogs = document.querySelectorAll('mat-dialog-container, [role="dialog"], .cdk-overlay-pane');
+					for (const dialog of dialogs) {
+						const text = (dialog.textContent || '');
+						if (text.includes('\uC6F9\uC0AC\uC774\uD2B8 URL') || text.includes('URL \uBD99\uC5EC\uB123\uAE30')) {
+							const ta = dialog.querySelector('textarea');
+							if (ta && ta.offsetParent !== null) {
+								ta.focus();
+								ta.value = url;
+								ta.dispatchEvent(new Event('input', { bubbles: true }));
+								ta.dispatchEvent(new Event('change', { bubbles: true }));
+								return { success: true, method: 'dialog textarea' };
+							}
+						}
+					}
+
+					// placeholder\uB85C \uCC3E\uAE30
+					const textareas = document.querySelectorAll('textarea');
+					for (const ta of textareas) {
+						const placeholder = (ta.placeholder || '').toLowerCase();
+						if (placeholder.includes('url') || placeholder.includes('\uBD99\uC5EC\uB123\uAE30')) {
+							if (ta.offsetParent !== null) {
+								ta.focus();
+								ta.value = url;
+								ta.dispatchEvent(new Event('input', { bubbles: true }));
+								ta.dispatchEvent(new Event('change', { bubbles: true }));
+								return { success: true, method: 'placeholder textarea' };
+							}
+						}
+					}
+
+					// \uC544\uBB34 visible textarea
+					for (const ta of textareas) {
+						if (ta.offsetParent !== null) {
+							ta.focus();
+							ta.value = url;
+							ta.dispatchEvent(new Event('input', { bubbles: true }));
+							ta.dispatchEvent(new Event('change', { bubbles: true }));
+							return { success: true, method: 'any visible textarea' };
+						}
+					}
+
+					return { success: false, error: 'URL textarea not found' };
+				})();
+			`);
+      console.log("[NotebookLM Bridge] Link Step 4 (URL \uC785\uB825):", step4);
+      await this.delay(1e3);
+      const step5 = await view.webview.executeJavaScript(`
+				(function() {
+					const buttons = document.querySelectorAll('button');
+					for (const btn of buttons) {
+						const text = (btn.textContent || '').trim();
+						if (text === '\uC0BD\uC785' || text === 'Insert') {
+							if (!btn.disabled) {
+								btn.click();
+								return { success: true };
+							} else {
+								return { success: false, error: '\uC0BD\uC785 button is disabled' };
+							}
+						}
+					}
+					return { success: false, error: '\uC0BD\uC785 button not found' };
+				})();
+			`);
+      console.log("[NotebookLM Bridge] Link Step 5 (\uC0BD\uC785 \uBC84\uD2BC):", step5);
+      if ((step4 == null ? void 0 : step4.success) && (step5 == null ? void 0 : step5.success)) {
+        new import_obsidian.Notice(`\u2705 "${note.title}" \uB9C1\uD06C \uC18C\uC2A4\uAC00 \uCD94\uAC00\uB418\uC5C8\uC2B5\uB2C8\uB2E4!
+(${note.shareLink})`, 5e3);
+      } else if (step4 == null ? void 0 : step4.success) {
+        new import_obsidian.Notice(`\u{1F4DD} URL \uC785\uB825 \uC644\uB8CC!
+"\uC0BD\uC785" \uBC84\uD2BC\uC744 \uD074\uB9AD\uD574\uC8FC\uC138\uC694.`, 5e3);
+      } else {
+        await navigator.clipboard.writeText(note.shareLink);
+        new import_obsidian.Notice(`\u{1F4CB} \uC790\uB3D9 \uC785\uB825 \uC2E4\uD328. URL\uC774 \uD074\uB9BD\uBCF4\uB4DC\uC5D0 \uBCF5\uC0AC\uB428.
+
+${note.shareLink}`, 8e3);
+      }
+    } catch (error) {
+      console.error("[NotebookLM Bridge] Link source add failed:", error);
+      try {
+        await navigator.clipboard.writeText(note.shareLink);
+        new import_obsidian.Notice(`\u{1F4CB} "${note.title}" URL\uC774 \uD074\uB9BD\uBCF4\uB4DC\uC5D0 \uBCF5\uC0AC\uB428.
+
+\uC218\uB3D9\uC73C\uB85C \uBD99\uC5EC\uB123\uAE30 \uD574\uC8FC\uC138\uC694.`, 8e3);
+      } catch (e) {
+        new import_obsidian.Notice("\uB9C1\uD06C \uC18C\uC2A4 \uCD94\uAC00\uC5D0 \uC2E4\uD328\uD588\uC2B5\uB2C8\uB2E4.", 5e3);
       }
     }
   }
