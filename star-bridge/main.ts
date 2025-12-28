@@ -919,34 +919,46 @@ export default class NotebookLMBridgePlugin extends Plugin {
 	}
 
 	// API 직접 호출 방식으로 소스 추가
+	// 참고: API 방식은 URL 소스만 지원 (izAoDd RPC)
+	// 텍스트 소스는 API가 없어 DOM 방식으로 폴백
 	async addSourceViaAPI(view: NotebookLMView, note: NoteData) {
 		if (!view.webview) return;
 
-		const content = '# ' + note.title + '\n\n' + note.content;
-		new Notice(`"${note.title}" API 방식으로 소스 추가 중...`);
+		// share_link가 있으면 URL 소스로 추가 (API 지원)
+		if (note.shareLink) {
+			await this.addUrlSourceViaAPI(view, note);
+			return;
+		}
+
+		// 텍스트 소스는 API 미지원 → DOM 방식 사용
+		console.log('[NotebookLM Bridge] Text source - API not supported, using DOM method');
+		new Notice('텍스트 소스는 DOM 방식으로 추가합니다...');
+		await this.addSourceViaDOM(view, note);
+	}
+
+	// URL 소스 API 추가 (izAoDd RPC) - 테스트로 검증됨
+	async addUrlSourceViaAPI(view: NotebookLMView, note: NoteData) {
+		if (!view.webview || !note.shareLink) return;
+
+		new Notice(`"${note.title}" URL 소스 API로 추가 중...`);
 
 		try {
-			// Step 1: 현재 노트북 ID와 at 토큰 추출
+			// Step 1: 노트북 ID와 at 토큰 추출
 			const pageInfo = await view.webview.executeJavaScript(`
 				(function() {
-					// 노트북 ID 추출 (URL에서)
 					const match = window.location.pathname.match(/\\/notebook\\/([^/]+)/);
 					const notebookId = match ? match[1] : null;
 
-					// at 토큰 추출 (페이지 소스에서)
 					let atToken = null;
 					const scripts = document.querySelectorAll('script');
 					for (const script of scripts) {
 						const text = script.textContent || '';
-						// "SNlM0e":"TOKEN" 패턴 찾기
 						const tokenMatch = text.match(/"SNlM0e":"([^"]+)"/);
 						if (tokenMatch) {
 							atToken = tokenMatch[1];
 							break;
 						}
 					}
-
-					// 대체 방법: window.WIZ_global_data에서 추출
 					if (!atToken && window.WIZ_global_data && window.WIZ_global_data.SNlM0e) {
 						atToken = window.WIZ_global_data.SNlM0e;
 					}
@@ -958,31 +970,27 @@ export default class NotebookLMBridgePlugin extends Plugin {
 			console.log('[NotebookLM Bridge] Page info:', pageInfo);
 
 			if (!pageInfo.notebookId) {
-				new Notice('노트북 ID를 찾을 수 없습니다. 노트북 안에서 실행해주세요.');
+				new Notice('노트북을 먼저 선택해주세요.');
 				return;
 			}
 
 			if (!pageInfo.atToken) {
-				new Notice('인증 토큰을 찾을 수 없습니다. DOM 방식으로 전환합니다.');
-				await this.addSourceViaDOM(view, note);
+				new Notice('인증 토큰을 찾을 수 없습니다. DOM 방식으로 전환...');
+				await this.addLinkSourceToNotebook(view, note);
 				return;
 			}
 
-			// Step 2: API 호출로 텍스트 소스 추가
-			// izAoDd RPC는 URL용이고, 텍스트용 RPC ID를 찾아야 함
-			// 일단 텍스트는 다른 RPC를 사용할 수 있음 - 텍스트 추가용 RPC 찾기
+			// Step 2: izAoDd RPC로 URL 소스 추가
+			const shareLink = note.shareLink;
 			const result = await view.webview.executeJavaScript(`
 				(async function() {
 					const notebookId = ${JSON.stringify(pageInfo.notebookId)};
 					const atToken = ${JSON.stringify(pageInfo.atToken)};
-					const content = ${JSON.stringify(content)};
+					const url = ${JSON.stringify(shareLink)};
 
-					// 텍스트 소스 추가 API 호출
-					// RPC ID for text source: 확인 필요 - 일단 시도
-					const rpcId = 'aJdXGd'; // 텍스트 소스 추가용 (추정)
-
+					const rpcId = 'izAoDd';
 					const requestBody = [[[rpcId, JSON.stringify([
-						[[null, content, null, null, null, null, null, null, null, null, 2]], // 텍스트 내용
+						[[null, null, [url], null, null, null, null, null, null, null, 1]],
 						notebookId,
 						[2],
 						[1, null, null, null, null, null, null, null, null, null, [1]]
@@ -995,20 +1003,18 @@ export default class NotebookLMBridgePlugin extends Plugin {
 					try {
 						const response = await fetch('/_/LabsTailwindUi/data/batchexecute?rpcids=' + rpcId, {
 							method: 'POST',
-							headers: {
-								'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
-							},
+							headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
 							body: formData.toString(),
 							credentials: 'include'
 						});
 
 						const text = await response.text();
-						console.log('[API Response]', text.substring(0, 500));
+						console.log('[API Response]', text.substring(0, 300));
 
-						if (response.ok && !text.includes('error')) {
-							return { success: true, response: text.substring(0, 200) };
+						if (response.ok && text.includes('wrb.fr')) {
+							return { success: true, preview: text.substring(0, 200) };
 						} else {
-							return { success: false, error: 'API returned error', response: text.substring(0, 200) };
+							return { success: false, error: 'API error', preview: text.substring(0, 200) };
 						}
 					} catch (error) {
 						return { success: false, error: error.message };
@@ -1016,20 +1022,19 @@ export default class NotebookLMBridgePlugin extends Plugin {
 				})();
 			`);
 
-			console.log('[NotebookLM Bridge] API result:', result);
+			console.log('[NotebookLM Bridge] URL API result:', result);
 
 			if (result?.success) {
-				new Notice(`✅ "${note.title}" API로 소스 추가 완료!`);
+				new Notice(`✅ "${note.title}" URL 소스 추가 완료!`);
 			} else {
-				console.log('[NotebookLM Bridge] API failed, falling back to DOM');
-				new Notice('API 방식 실패. DOM 방식으로 재시도...');
-				await this.addSourceViaDOM(view, note);
+				new Notice('API 실패. DOM 방식으로 재시도...');
+				await this.addLinkSourceToNotebook(view, note);
 			}
 
 		} catch (error) {
-			console.error('[NotebookLM Bridge] API method failed:', error);
-			new Notice('API 방식 실패. DOM 방식으로 재시도...');
-			await this.addSourceViaDOM(view, note);
+			console.error('[NotebookLM Bridge] URL API failed:', error);
+			new Notice('API 실패. DOM 방식으로 재시도...');
+			await this.addLinkSourceToNotebook(view, note);
 		}
 	}
 

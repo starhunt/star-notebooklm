@@ -773,32 +773,40 @@ var NotebookLMBridgePlugin = class extends import_obsidian.Plugin {
     await this.addSourceViaDOM(view, note);
   }
   // API 직접 호출 방식으로 소스 추가
+  // 참고: API 방식은 URL 소스만 지원 (izAoDd RPC)
+  // 텍스트 소스는 API가 없어 DOM 방식으로 폴백
   async addSourceViaAPI(view, note) {
     if (!view.webview)
       return;
-    const content = "# " + note.title + "\n\n" + note.content;
-    new import_obsidian.Notice(`"${note.title}" API \uBC29\uC2DD\uC73C\uB85C \uC18C\uC2A4 \uCD94\uAC00 \uC911...`);
+    if (note.shareLink) {
+      await this.addUrlSourceViaAPI(view, note);
+      return;
+    }
+    console.log("[NotebookLM Bridge] Text source - API not supported, using DOM method");
+    new import_obsidian.Notice("\uD14D\uC2A4\uD2B8 \uC18C\uC2A4\uB294 DOM \uBC29\uC2DD\uC73C\uB85C \uCD94\uAC00\uD569\uB2C8\uB2E4...");
+    await this.addSourceViaDOM(view, note);
+  }
+  // URL 소스 API 추가 (izAoDd RPC) - 테스트로 검증됨
+  async addUrlSourceViaAPI(view, note) {
+    if (!view.webview || !note.shareLink)
+      return;
+    new import_obsidian.Notice(`"${note.title}" URL \uC18C\uC2A4 API\uB85C \uCD94\uAC00 \uC911...`);
     try {
       const pageInfo = await view.webview.executeJavaScript(`
 				(function() {
-					// \uB178\uD2B8\uBD81 ID \uCD94\uCD9C (URL\uC5D0\uC11C)
 					const match = window.location.pathname.match(/\\/notebook\\/([^/]+)/);
 					const notebookId = match ? match[1] : null;
 
-					// at \uD1A0\uD070 \uCD94\uCD9C (\uD398\uC774\uC9C0 \uC18C\uC2A4\uC5D0\uC11C)
 					let atToken = null;
 					const scripts = document.querySelectorAll('script');
 					for (const script of scripts) {
 						const text = script.textContent || '';
-						// "SNlM0e":"TOKEN" \uD328\uD134 \uCC3E\uAE30
 						const tokenMatch = text.match(/"SNlM0e":"([^"]+)"/);
 						if (tokenMatch) {
 							atToken = tokenMatch[1];
 							break;
 						}
 					}
-
-					// \uB300\uCCB4 \uBC29\uBC95: window.WIZ_global_data\uC5D0\uC11C \uCD94\uCD9C
 					if (!atToken && window.WIZ_global_data && window.WIZ_global_data.SNlM0e) {
 						atToken = window.WIZ_global_data.SNlM0e;
 					}
@@ -808,26 +816,24 @@ var NotebookLMBridgePlugin = class extends import_obsidian.Plugin {
 			`);
       console.log("[NotebookLM Bridge] Page info:", pageInfo);
       if (!pageInfo.notebookId) {
-        new import_obsidian.Notice("\uB178\uD2B8\uBD81 ID\uB97C \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4. \uB178\uD2B8\uBD81 \uC548\uC5D0\uC11C \uC2E4\uD589\uD574\uC8FC\uC138\uC694.");
+        new import_obsidian.Notice("\uB178\uD2B8\uBD81\uC744 \uBA3C\uC800 \uC120\uD0DD\uD574\uC8FC\uC138\uC694.");
         return;
       }
       if (!pageInfo.atToken) {
-        new import_obsidian.Notice("\uC778\uC99D \uD1A0\uD070\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4. DOM \uBC29\uC2DD\uC73C\uB85C \uC804\uD658\uD569\uB2C8\uB2E4.");
-        await this.addSourceViaDOM(view, note);
+        new import_obsidian.Notice("\uC778\uC99D \uD1A0\uD070\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4. DOM \uBC29\uC2DD\uC73C\uB85C \uC804\uD658...");
+        await this.addLinkSourceToNotebook(view, note);
         return;
       }
+      const shareLink = note.shareLink;
       const result = await view.webview.executeJavaScript(`
 				(async function() {
 					const notebookId = ${JSON.stringify(pageInfo.notebookId)};
 					const atToken = ${JSON.stringify(pageInfo.atToken)};
-					const content = ${JSON.stringify(content)};
+					const url = ${JSON.stringify(shareLink)};
 
-					// \uD14D\uC2A4\uD2B8 \uC18C\uC2A4 \uCD94\uAC00 API \uD638\uCD9C
-					// RPC ID for text source: \uD655\uC778 \uD544\uC694 - \uC77C\uB2E8 \uC2DC\uB3C4
-					const rpcId = 'aJdXGd'; // \uD14D\uC2A4\uD2B8 \uC18C\uC2A4 \uCD94\uAC00\uC6A9 (\uCD94\uC815)
-
+					const rpcId = 'izAoDd';
 					const requestBody = [[[rpcId, JSON.stringify([
-						[[null, content, null, null, null, null, null, null, null, null, 2]], // \uD14D\uC2A4\uD2B8 \uB0B4\uC6A9
+						[[null, null, [url], null, null, null, null, null, null, null, 1]],
 						notebookId,
 						[2],
 						[1, null, null, null, null, null, null, null, null, null, [1]]
@@ -840,38 +846,35 @@ var NotebookLMBridgePlugin = class extends import_obsidian.Plugin {
 					try {
 						const response = await fetch('/_/LabsTailwindUi/data/batchexecute?rpcids=' + rpcId, {
 							method: 'POST',
-							headers: {
-								'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
-							},
+							headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
 							body: formData.toString(),
 							credentials: 'include'
 						});
 
 						const text = await response.text();
-						console.log('[API Response]', text.substring(0, 500));
+						console.log('[API Response]', text.substring(0, 300));
 
-						if (response.ok && !text.includes('error')) {
-							return { success: true, response: text.substring(0, 200) };
+						if (response.ok && text.includes('wrb.fr')) {
+							return { success: true, preview: text.substring(0, 200) };
 						} else {
-							return { success: false, error: 'API returned error', response: text.substring(0, 200) };
+							return { success: false, error: 'API error', preview: text.substring(0, 200) };
 						}
 					} catch (error) {
 						return { success: false, error: error.message };
 					}
 				})();
 			`);
-      console.log("[NotebookLM Bridge] API result:", result);
+      console.log("[NotebookLM Bridge] URL API result:", result);
       if (result == null ? void 0 : result.success) {
-        new import_obsidian.Notice(`\u2705 "${note.title}" API\uB85C \uC18C\uC2A4 \uCD94\uAC00 \uC644\uB8CC!`);
+        new import_obsidian.Notice(`\u2705 "${note.title}" URL \uC18C\uC2A4 \uCD94\uAC00 \uC644\uB8CC!`);
       } else {
-        console.log("[NotebookLM Bridge] API failed, falling back to DOM");
-        new import_obsidian.Notice("API \uBC29\uC2DD \uC2E4\uD328. DOM \uBC29\uC2DD\uC73C\uB85C \uC7AC\uC2DC\uB3C4...");
-        await this.addSourceViaDOM(view, note);
+        new import_obsidian.Notice("API \uC2E4\uD328. DOM \uBC29\uC2DD\uC73C\uB85C \uC7AC\uC2DC\uB3C4...");
+        await this.addLinkSourceToNotebook(view, note);
       }
     } catch (error) {
-      console.error("[NotebookLM Bridge] API method failed:", error);
-      new import_obsidian.Notice("API \uBC29\uC2DD \uC2E4\uD328. DOM \uBC29\uC2DD\uC73C\uB85C \uC7AC\uC2DC\uB3C4...");
-      await this.addSourceViaDOM(view, note);
+      console.error("[NotebookLM Bridge] URL API failed:", error);
+      new import_obsidian.Notice("API \uC2E4\uD328. DOM \uBC29\uC2DD\uC73C\uB85C \uC7AC\uC2DC\uB3C4...");
+      await this.addLinkSourceToNotebook(view, note);
     }
   }
   // DOM 조작 방식으로 소스 추가
