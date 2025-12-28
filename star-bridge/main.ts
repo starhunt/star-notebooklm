@@ -12,8 +12,6 @@ import {
 	WorkspaceLeaf,
 	Modal
 } from 'obsidian';
-import * as http from 'http';
-import * as url from 'url';
 
 // NotebookLM 웹뷰 타입
 const NOTEBOOKLM_VIEW_TYPE = 'notebooklm-webview';
@@ -28,19 +26,15 @@ interface NotebookInfo {
 type SourceAddMethod = 'dom' | 'api';
 
 interface NotebookLMBridgeSettings {
-	serverPort: number;
-	autoStart: boolean;
 	includeMetadata: boolean;
 	includeFrontmatter: boolean;
 	sourceAddMethod: SourceAddMethod; // 'dom' = DOM 조작, 'api' = API 직접 호출
 }
 
 const DEFAULT_SETTINGS: NotebookLMBridgeSettings = {
-	serverPort: 27123,
-	autoStart: true,
 	includeMetadata: true,
 	includeFrontmatter: false,
-	sourceAddMethod: 'dom' // 기본값: DOM 조작 방식
+	sourceAddMethod: 'api' // 기본값: API 방식
 };
 
 interface NoteData {
@@ -64,8 +58,6 @@ interface QueuedNote {
 
 export default class NotebookLMBridgePlugin extends Plugin {
 	settings: NotebookLMBridgeSettings;
-	server: http.Server | null = null;
-	isServerRunning: boolean = false;
 	statusBarItem: HTMLElement;
 	noteQueue: Map<string, QueuedNote> = new Map();
 	currentPageState: any = null;
@@ -115,17 +107,6 @@ export default class NotebookLMBridgePlugin extends Plugin {
 			}
 		});
 
-		this.addCommand({
-			id: 'toggle-server',
-			name: '브릿지 서버 시작/중지',
-			callback: async () => {
-				if (this.isServerRunning) {
-					await this.stopServer();
-				} else {
-					await this.startServer();
-				}
-			}
-		});
 
 		this.addCommand({
 			id: 'clear-queue',
@@ -188,15 +169,10 @@ export default class NotebookLMBridgePlugin extends Plugin {
 
 		// 설정 탭 추가
 		this.addSettingTab(new NotebookLMBridgeSettingTab(this.app, this));
-
-		// 자동 시작 설정 확인
-		if (this.settings.autoStart) {
-			await this.startServer();
-		}
 	}
 
 	async onunload() {
-		await this.stopServer();
+		// cleanup
 	}
 
 	async loadSettings() {
@@ -208,187 +184,13 @@ export default class NotebookLMBridgePlugin extends Plugin {
 	}
 
 	updateStatusBar() {
-		if (this.isServerRunning) {
-			this.statusBarItem.setText(`🟢 NLM Bridge :${this.settings.serverPort}`);
-			this.statusBarItem.setAttribute('title', `NotebookLM Bridge 서버 실행 중 (포트: ${this.settings.serverPort})\n대기열: ${this.noteQueue.size}개`);
+		const queueSize = this.noteQueue.size;
+		if (queueSize > 0) {
+			this.statusBarItem.setText(`📋 NLM: ${queueSize}`);
+			this.statusBarItem.setAttribute('title', `NotebookLM Bridge\n대기열: ${queueSize}개`);
 		} else {
-			this.statusBarItem.setText('🔴 NLM Bridge');
-			this.statusBarItem.setAttribute('title', 'NotebookLM Bridge 서버 중지됨');
-		}
-	}
-
-	async startServer() {
-		if (this.isServerRunning) {
-			new Notice('서버가 이미 실행 중입니다');
-			return;
-		}
-
-		try {
-			this.server = http.createServer(async (req, res) => {
-				// CORS 헤더 설정
-				res.setHeader('Access-Control-Allow-Origin', '*');
-				res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-				res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-				res.setHeader('Content-Type', 'application/json; charset=utf-8');
-
-				// Preflight 요청 처리
-				if (req.method === 'OPTIONS') {
-					res.writeHead(200);
-					res.end();
-					return;
-				}
-
-				const parsedUrl = url.parse(req.url || '', true);
-				const pathname = parsedUrl.pathname;
-
-				try {
-					// 상태 확인
-					if (pathname === '/status' && req.method === 'GET') {
-						res.writeHead(200);
-						res.end(JSON.stringify({
-							status: 'running',
-							version: '1.0.0',
-							queueSize: this.noteQueue.size
-						}));
-						return;
-					}
-
-					// 현재 활성 노트 가져오기
-					if (pathname === '/current-note' && req.method === 'GET') {
-						const note = await this.getCurrentNote();
-						if (note) {
-							res.writeHead(200);
-							res.end(JSON.stringify(note));
-						} else {
-							res.writeHead(404);
-							res.end(JSON.stringify({ error: '활성 노트가 없습니다' }));
-						}
-						return;
-					}
-
-					// 대기열에 있는 노트들 가져오기
-					if (pathname === '/queue' && req.method === 'GET') {
-						const queue = Array.from(this.noteQueue.values())
-							.filter(item => item.status === 'pending');
-						res.writeHead(200);
-						res.end(JSON.stringify({ notes: queue }));
-						return;
-					}
-
-					// 대기열에서 노트 가져오고 제거
-					if (pathname === '/queue/pop' && req.method === 'POST') {
-						const pendingNotes = Array.from(this.noteQueue.entries())
-							.filter(([, item]) => item.status === 'pending');
-						
-						if (pendingNotes.length > 0) {
-							const [id, item] = pendingNotes[0];
-							item.status = 'sent';
-							this.noteQueue.delete(id);
-							this.updateStatusBar();
-							res.writeHead(200);
-							res.end(JSON.stringify(item));
-						} else {
-							res.writeHead(404);
-							res.end(JSON.stringify({ error: '대기 중인 노트가 없습니다' }));
-						}
-						return;
-					}
-
-					// 특정 노트 전송 완료 표시
-					if (pathname?.startsWith('/queue/complete/') && req.method === 'POST') {
-						const noteId = pathname.replace('/queue/complete/', '');
-						if (this.noteQueue.has(noteId)) {
-							this.noteQueue.delete(noteId);
-							this.updateStatusBar();
-							res.writeHead(200);
-							res.end(JSON.stringify({ success: true }));
-						} else {
-							res.writeHead(404);
-							res.end(JSON.stringify({ error: '노트를 찾을 수 없습니다' }));
-						}
-						return;
-					}
-
-					// 대기열 비우기
-					if (pathname === '/queue/clear' && req.method === 'DELETE') {
-						this.noteQueue.clear();
-						this.updateStatusBar();
-						res.writeHead(200);
-						res.end(JSON.stringify({ success: true }));
-						return;
-					}
-
-					// 모든 노트 목록 가져오기 (선택적)
-					if (pathname === '/notes' && req.method === 'GET') {
-						const files = this.app.vault.getMarkdownFiles();
-						const notes = files.slice(0, 100).map(file => ({
-							title: file.basename,
-							path: file.path
-						}));
-						res.writeHead(200);
-						res.end(JSON.stringify({ notes }));
-						return;
-					}
-
-					// 특정 노트 가져오기
-					if (pathname?.startsWith('/note/') && req.method === 'GET') {
-						const notePath = decodeURIComponent(pathname.replace('/note/', ''));
-						const file = this.app.vault.getAbstractFileByPath(notePath);
-						if (file instanceof TFile) {
-							const note = await this.getFileContent(file);
-							res.writeHead(200);
-							res.end(JSON.stringify(note));
-						} else {
-							res.writeHead(404);
-							res.end(JSON.stringify({ error: '노트를 찾을 수 없습니다' }));
-						}
-						return;
-					}
-
-					// 알 수 없는 엔드포인트
-					res.writeHead(404);
-					res.end(JSON.stringify({ error: 'Not found' }));
-
-				} catch (error) {
-					console.error('Server error:', error);
-					res.writeHead(500);
-					res.end(JSON.stringify({ error: 'Internal server error' }));
-				}
-			});
-
-			this.server.listen(this.settings.serverPort, '127.0.0.1', () => {
-				this.isServerRunning = true;
-				this.updateStatusBar();
-				new Notice(`NotebookLM Bridge 서버 시작 (포트: ${this.settings.serverPort})`);
-			});
-
-			this.server.on('error', (error: NodeJS.ErrnoException) => {
-				if (error.code === 'EADDRINUSE') {
-					new Notice(`포트 ${this.settings.serverPort}가 이미 사용 중입니다`);
-				} else {
-					new Notice(`서버 오류: ${error.message}`);
-				}
-				this.isServerRunning = false;
-				this.updateStatusBar();
-			});
-
-		} catch (error) {
-			console.error('Failed to start server:', error);
-			new Notice('서버 시작 실패');
-		}
-	}
-
-	async stopServer() {
-		if (this.server) {
-			return new Promise<void>((resolve) => {
-				this.server?.close(() => {
-					this.server = null;
-					this.isServerRunning = false;
-					this.updateStatusBar();
-					new Notice('NotebookLM Bridge 서버 중지');
-					resolve();
-				});
-			});
+			this.statusBarItem.setText('📘 NLM Bridge');
+			this.statusBarItem.setAttribute('title', 'NotebookLM Bridge 준비됨');
 		}
 	}
 
@@ -2291,37 +2093,6 @@ class NotebookLMBridgeSettingTab extends PluginSettingTab {
 
 		containerEl.createEl('h2', { text: 'NotebookLM Bridge 설정' });
 
-		// 서버 상태
-		const statusDiv = containerEl.createDiv('setting-item');
-		statusDiv.createEl('div', { 
-			text: this.plugin.isServerRunning ? '🟢 서버 실행 중' : '🔴 서버 중지됨',
-			cls: 'setting-item-name'
-		});
-
-		new Setting(containerEl)
-			.setName('서버 포트')
-			.setDesc('브릿지 서버가 사용할 포트 번호 (기본: 27123)')
-			.addText(text => text
-				.setPlaceholder('27123')
-				.setValue(this.plugin.settings.serverPort.toString())
-				.onChange(async (value) => {
-					const port = parseInt(value);
-					if (!isNaN(port) && port > 0 && port < 65536) {
-						this.plugin.settings.serverPort = port;
-						await this.plugin.saveSettings();
-					}
-				}));
-
-		new Setting(containerEl)
-			.setName('자동 시작')
-			.setDesc('옵시디언 시작 시 브릿지 서버 자동 시작')
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.autoStart)
-				.onChange(async (value) => {
-					this.plugin.settings.autoStart = value;
-					await this.plugin.saveSettings();
-				}));
-
 		new Setting(containerEl)
 			.setName('메타데이터 포함')
 			.setDesc('노트 전송 시 생성/수정 시간, 태그 등 메타데이터 포함')
@@ -2347,47 +2118,27 @@ class NotebookLMBridgeSettingTab extends PluginSettingTab {
 			.setName('소스 추가 방식')
 			.setDesc('NotebookLM에 소스를 추가하는 방식을 선택합니다')
 			.addDropdown(dropdown => dropdown
-				.addOption('dom', 'DOM 조작 (기본, 안정적)')
-				.addOption('api', 'API 직접 호출 (실험적, 빠름)')
+				.addOption('api', 'API 직접 호출 (빠름, 권장)')
+				.addOption('dom', 'DOM 조작 (안정적)')
 				.setValue(this.plugin.settings.sourceAddMethod)
 				.onChange(async (value: 'dom' | 'api') => {
 					this.plugin.settings.sourceAddMethod = value;
 					await this.plugin.saveSettings();
 				}));
 
-		// 서버 제어 버튼
-		new Setting(containerEl)
-			.setName('서버 제어')
-			.setDesc('브릿지 서버 시작 또는 중지')
-			.addButton(button => button
-				.setButtonText(this.plugin.isServerRunning ? '서버 중지' : '서버 시작')
-				.onClick(async () => {
-					if (this.plugin.isServerRunning) {
-						await this.plugin.stopServer();
-					} else {
-						await this.plugin.startServer();
-					}
-					this.display(); // 화면 새로고침
-				}));
-
-		// 크롬 확장 안내
-		containerEl.createEl('h3', { text: '크롬 확장 프로그램' });
-		containerEl.createEl('p', { 
-			text: '이 플러그인을 사용하려면 동반 크롬 확장 프로그램이 필요합니다. NotebookLM 페이지에서 크롬 확장을 통해 대기열의 노트를 추가할 수 있습니다.'
+		// 사용법
+		containerEl.createEl('h3', { text: '사용법' });
+		containerEl.createEl('p', {
+			text: '1. 리본의 📖 아이콘을 클릭하여 NotebookLM 패널을 엽니다.'
 		});
-
-		// API 엔드포인트 정보
-		containerEl.createEl('h3', { text: 'API 엔드포인트' });
-		const apiList = containerEl.createEl('ul');
-		const endpoints = [
-			'GET /status - 서버 상태 확인',
-			'GET /current-note - 현재 활성 노트 가져오기',
-			'GET /queue - 대기열 조회',
-			'POST /queue/pop - 대기열에서 노트 가져오기',
-			'DELETE /queue/clear - 대기열 비우기'
-		];
-		endpoints.forEach(ep => {
-			apiList.createEl('li', { text: ep });
+		containerEl.createEl('p', {
+			text: '2. Google 계정으로 로그인합니다.'
+		});
+		containerEl.createEl('p', {
+			text: '3. 노트북을 선택하거나 새로 만듭니다.'
+		});
+		containerEl.createEl('p', {
+			text: '4. 리본의 📤 아이콘을 클릭하여 현재 노트를 전송합니다.'
 		});
 	}
 }
