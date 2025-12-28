@@ -773,8 +773,7 @@ var NotebookLMBridgePlugin = class extends import_obsidian.Plugin {
     await this.addSourceViaDOM(view, note);
   }
   // API 직접 호출 방식으로 소스 추가
-  // 참고: API 방식은 URL 소스만 지원 (izAoDd RPC)
-  // 텍스트 소스는 API가 없어 DOM 방식으로 폴백
+  // izAoDd RPC로 텍스트/URL 모두 지원!
   async addSourceViaAPI(view, note) {
     if (!view.webview)
       return;
@@ -782,9 +781,113 @@ var NotebookLMBridgePlugin = class extends import_obsidian.Plugin {
       await this.addUrlSourceViaAPI(view, note);
       return;
     }
-    console.log("[NotebookLM Bridge] Text source - API not supported, using DOM method");
-    new import_obsidian.Notice("\uD14D\uC2A4\uD2B8 \uC18C\uC2A4\uB294 DOM \uBC29\uC2DD\uC73C\uB85C \uCD94\uAC00\uD569\uB2C8\uB2E4...");
-    await this.addSourceViaDOM(view, note);
+    await this.addTextSourceViaAPI(view, note);
+  }
+  // 텍스트 소스 API 추가 (izAoDd RPC) - nlm-py에서 검증된 페이로드
+  async addTextSourceViaAPI(view, note) {
+    if (!view.webview)
+      return;
+    const title = note.title;
+    const content = note.content;
+    new import_obsidian.Notice(`"${title}" \uD14D\uC2A4\uD2B8 \uC18C\uC2A4 API\uB85C \uCD94\uAC00 \uC911...`);
+    try {
+      const pageInfo = await view.webview.executeJavaScript(`
+				(function() {
+					const match = window.location.pathname.match(/\\/notebook\\/([^/]+)/);
+					const notebookId = match ? match[1] : null;
+
+					let atToken = null;
+					const scripts = document.querySelectorAll('script');
+					for (const script of scripts) {
+						const text = script.textContent || '';
+						const tokenMatch = text.match(/"SNlM0e":"([^"]+)"/);
+						if (tokenMatch) {
+							atToken = tokenMatch[1];
+							break;
+						}
+					}
+					if (!atToken && window.WIZ_global_data && window.WIZ_global_data.SNlM0e) {
+						atToken = window.WIZ_global_data.SNlM0e;
+					}
+
+					return { notebookId, atToken };
+				})();
+			`);
+      console.log("[NotebookLM Bridge] Page info:", pageInfo);
+      if (!pageInfo.notebookId) {
+        new import_obsidian.Notice("\uB178\uD2B8\uBD81\uC744 \uBA3C\uC800 \uC120\uD0DD\uD574\uC8FC\uC138\uC694.");
+        await this.addSourceViaDOM(view, note);
+        return;
+      }
+      if (!pageInfo.atToken) {
+        new import_obsidian.Notice("\uC778\uC99D \uD1A0\uD070\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4. DOM \uBC29\uC2DD\uC73C\uB85C \uC804\uD658...");
+        await this.addSourceViaDOM(view, note);
+        return;
+      }
+      const result = await view.webview.executeJavaScript(`
+				(async function() {
+					const notebookId = ${JSON.stringify(pageInfo.notebookId)};
+					const atToken = ${JSON.stringify(pageInfo.atToken)};
+					const title = ${JSON.stringify(title)};
+					const content = ${JSON.stringify(content)};
+
+					const rpcId = 'izAoDd';
+
+					// nlm-py\uC5D0\uC11C \uAC80\uC99D\uB41C \uD14D\uC2A4\uD2B8 \uC18C\uC2A4 \uD398\uC774\uB85C\uB4DC
+					const requestPayload = [
+						[
+							[
+								null,
+								[title, content],  // [\uC81C\uBAA9, \uB0B4\uC6A9] \uBC30\uC5F4
+								null,
+								2  // \uC18C\uC2A4 \uD0C0\uC785: \uD14D\uC2A4\uD2B8
+							]
+						],
+						notebookId
+					];
+
+					const requestBody = [[[rpcId, JSON.stringify(requestPayload), null, "generic"]]];
+
+					const formData = new URLSearchParams();
+					formData.append('at', atToken);
+					formData.append('f.req', JSON.stringify(requestBody));
+
+					try {
+						const response = await fetch('/_/LabsTailwindUi/data/batchexecute?rpcids=' + rpcId, {
+							method: 'POST',
+							headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+							body: formData.toString(),
+							credentials: 'include'
+						});
+
+						const text = await response.text();
+						console.log('[API Response]', text.substring(0, 300));
+
+						if (response.ok && text.includes('wrb.fr')) {
+							// \uC18C\uC2A4 ID \uCD94\uCD9C
+							const match = text.match(/[[[\\"([a-f0-9-]+)\\"]/);
+							return { success: true, sourceId: match ? match[1] : null };
+						} else {
+							return { success: false, error: 'API error', preview: text.substring(0, 200) };
+						}
+					} catch (error) {
+						return { success: false, error: error.message };
+					}
+				})();
+			`);
+      console.log("[NotebookLM Bridge] Text API result:", result);
+      if (result == null ? void 0 : result.success) {
+        new import_obsidian.Notice(`\u2705 "${title}" \uD14D\uC2A4\uD2B8 \uC18C\uC2A4 \uCD94\uAC00 \uC644\uB8CC!`);
+      } else {
+        console.log("[NotebookLM Bridge] Text API failed, falling back to DOM");
+        new import_obsidian.Notice("API \uC2E4\uD328. DOM \uBC29\uC2DD\uC73C\uB85C \uC7AC\uC2DC\uB3C4...");
+        await this.addSourceViaDOM(view, note);
+      }
+    } catch (error) {
+      console.error("[NotebookLM Bridge] Text API failed:", error);
+      new import_obsidian.Notice("API \uC2E4\uD328. DOM \uBC29\uC2DD\uC73C\uB85C \uC7AC\uC2DC\uB3C4...");
+      await this.addSourceViaDOM(view, note);
+    }
   }
   // URL 소스 API 추가 (izAoDd RPC) - 테스트로 검증됨
   async addUrlSourceViaAPI(view, note) {

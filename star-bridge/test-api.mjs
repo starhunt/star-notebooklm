@@ -196,70 +196,106 @@ async function testAPIMethod() {
 
 		console.log('Notebooks API result:', notebooksApiResult);
 
-		// 텍스트 소스 추가 API 테스트
-		console.log('\n4.2 Testing addTextSource API...');
+		// 텍스트 소스 추가 API 테스트 - ref/nlm-py에서 발견한 올바른 페이로드 형식
+		console.log('\n4.2 Testing addTextSource API (correct payload from nlm-py)...');
 
-		// 다양한 RPC ID 시도
-		const rpcIdsToTry = ['aJdXGd', 'izAoDd', 'VrwPLd', 'Vq0Xad'];
+		const testTitle = "Playwright API Test";
+		const testContent = "This is a test content from Playwright API test.\n\nCreated at: " + new Date().toISOString();
 
-		for (const rpcId of rpcIdsToTry) {
-			console.log(`\nTrying RPC ID: ${rpcId}`);
+		// nlm-py에서 발견한 올바른 텍스트 소스 페이로드:
+		// args = [[[None, [title, content], None, 2]], project_id]
+		const textSourceResult = await page.evaluate(async ({ atToken, notebookId, title, content }) => {
+			const rpcId = 'izAoDd';
 
-			const testContent = "Test content from Playwright API test - " + new Date().toISOString();
+			// 올바른 페이로드 형식 (nlm-py 참조)
+			const requestPayload = [
+				[
+					[
+						null,
+						[title, content],  // [제목, 내용] 배열!
+						null,
+						2  // 소스 타입: 텍스트
+					]
+				],
+				notebookId
+			];
 
-			const addSourceResult = await page.evaluate(async ({ atToken, notebookId, rpcId, content }) => {
-				// 다양한 페이로드 형식 시도
-				let requestPayload;
+			const requestBody = [[[rpcId, JSON.stringify(requestPayload), null, "generic"]]];
 
-				if (rpcId === 'izAoDd') {
-					// URL 소스용 - 테스트 URL
-					requestPayload = [
-						[[null, null, ["https://example.com"], null, null, null, null, null, null, null, 1]],
-						notebookId,
-						[2],
-						[1, null, null, null, null, null, null, null, null, null, [1]]
-					];
-				} else {
-					// 텍스트 소스용 추정
-					requestPayload = [
-						[[null, content, null, null, null, null, null, null, null, null, 2]],
-						notebookId,
-						[2],
-						[1, null, null, null, null, null, null, null, null, null, [1]]
-					];
-				}
+			const formData = new URLSearchParams();
+			formData.append('at', atToken);
+			formData.append('f.req', JSON.stringify(requestBody));
 
-				const requestBody = [[[rpcId, JSON.stringify(requestPayload), null, "generic"]]];
+			console.log('[Test] Text source payload:', JSON.stringify(requestPayload));
 
-				const formData = new URLSearchParams();
-				formData.append('at', atToken);
-				formData.append('f.req', JSON.stringify(requestBody));
-
-				try {
-					const response = await fetch('/_/LabsTailwindUi/data/batchexecute?rpcids=' + rpcId, {
-						method: 'POST',
-						headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-						body: formData.toString(),
-						credentials: 'include'
-					});
-					const text = await response.text();
-					return {
-						success: response.ok,
-						status: response.status,
-						preview: text.substring(0, 500),
-						hasError: text.toLowerCase().includes('error'),
-						hasSuccess: text.includes('wrb.fr')
-					};
-				} catch (error) {
-					return { success: false, error: error.message };
-				}
-			}, { atToken: tokenInfo.atToken, notebookId: tokenInfo.notebookId, rpcId, content: testContent });
-
-			console.log(`Result for ${rpcId}:`, JSON.stringify(addSourceResult, null, 2));
-
-			if (addSourceResult.hasSuccess && !addSourceResult.hasError) {
-				console.log(`\n✅ RPC ID ${rpcId} seems to work!`);
+			try {
+				const response = await fetch('/_/LabsTailwindUi/data/batchexecute?rpcids=' + rpcId, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+					body: formData.toString(),
+					credentials: 'include'
+				});
+				const text = await response.text();
+				return {
+					success: response.ok,
+					status: response.status,
+					preview: text.substring(0, 600),
+					hasError: text.toLowerCase().includes('"er"'),
+					hasSuccess: text.includes('wrb.fr')
+				};
+			} catch (error) {
+				return { success: false, error: error.message };
 			}
+		}, { atToken: tokenInfo.atToken, notebookId: tokenInfo.notebookId, title: testTitle, content: testContent });
+
+		console.log('Text source result:', JSON.stringify(textSourceResult, null, 2));
+
+		if (textSourceResult.hasSuccess && !textSourceResult.hasError) {
+			console.log('\n🎉 SUCCESS: Text source added via API!');
+		} else {
+			console.log('\n❌ Text source failed');
+		}
+
+		// URL 소스 테스트 (이미 작동 확인됨)
+		console.log('\n4.3 Testing URL source (already verified)...');
+		const urlSourceResult = await page.evaluate(async ({ atToken, notebookId }) => {
+			const rpcId = 'izAoDd';
+
+			// URL 소스 페이로드
+			const requestPayload = [
+				[[null, null, ["https://httpbin.org/html"]]],
+				notebookId
+			];
+
+			const requestBody = [[[rpcId, JSON.stringify(requestPayload), null, "generic"]]];
+
+			const formData = new URLSearchParams();
+			formData.append('at', atToken);
+			formData.append('f.req', JSON.stringify(requestBody));
+
+			try {
+				const response = await fetch('/_/LabsTailwindUi/data/batchexecute?rpcids=' + rpcId, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+					body: formData.toString(),
+					credentials: 'include'
+				});
+				const text = await response.text();
+				return {
+					success: response.ok,
+					status: response.status,
+					preview: text.substring(0, 400),
+					hasSuccess: text.includes('wrb.fr')
+				};
+			} catch (error) {
+				return { success: false, error: error.message };
+			}
+		}, { atToken: tokenInfo.atToken, notebookId: tokenInfo.notebookId });
+
+		console.log('URL source result:', JSON.stringify(urlSourceResult, null, 2));
+
+		if (urlSourceResult.hasSuccess) {
+			console.log('✅ URL source works!');
 		}
 
 		console.log('\n--- Test Complete ---');

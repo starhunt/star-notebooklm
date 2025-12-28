@@ -919,21 +919,136 @@ export default class NotebookLMBridgePlugin extends Plugin {
 	}
 
 	// API 직접 호출 방식으로 소스 추가
-	// 참고: API 방식은 URL 소스만 지원 (izAoDd RPC)
-	// 텍스트 소스는 API가 없어 DOM 방식으로 폴백
+	// izAoDd RPC로 텍스트/URL 모두 지원!
 	async addSourceViaAPI(view: NotebookLMView, note: NoteData) {
 		if (!view.webview) return;
 
-		// share_link가 있으면 URL 소스로 추가 (API 지원)
+		// share_link가 있으면 URL 소스로 추가
 		if (note.shareLink) {
 			await this.addUrlSourceViaAPI(view, note);
 			return;
 		}
 
-		// 텍스트 소스는 API 미지원 → DOM 방식 사용
-		console.log('[NotebookLM Bridge] Text source - API not supported, using DOM method');
-		new Notice('텍스트 소스는 DOM 방식으로 추가합니다...');
-		await this.addSourceViaDOM(view, note);
+		// 텍스트 소스 API로 추가
+		await this.addTextSourceViaAPI(view, note);
+	}
+
+	// 텍스트 소스 API 추가 (izAoDd RPC) - nlm-py에서 검증된 페이로드
+	async addTextSourceViaAPI(view: NotebookLMView, note: NoteData) {
+		if (!view.webview) return;
+
+		const title = note.title;
+		const content = note.content;
+		new Notice(`"${title}" 텍스트 소스 API로 추가 중...`);
+
+		try {
+			// Step 1: 노트북 ID와 at 토큰 추출
+			const pageInfo = await view.webview.executeJavaScript(`
+				(function() {
+					const match = window.location.pathname.match(/\\/notebook\\/([^/]+)/);
+					const notebookId = match ? match[1] : null;
+
+					let atToken = null;
+					const scripts = document.querySelectorAll('script');
+					for (const script of scripts) {
+						const text = script.textContent || '';
+						const tokenMatch = text.match(/"SNlM0e":"([^"]+)"/);
+						if (tokenMatch) {
+							atToken = tokenMatch[1];
+							break;
+						}
+					}
+					if (!atToken && window.WIZ_global_data && window.WIZ_global_data.SNlM0e) {
+						atToken = window.WIZ_global_data.SNlM0e;
+					}
+
+					return { notebookId, atToken };
+				})();
+			`);
+
+			console.log('[NotebookLM Bridge] Page info:', pageInfo);
+
+			if (!pageInfo.notebookId) {
+				new Notice('노트북을 먼저 선택해주세요.');
+				await this.addSourceViaDOM(view, note);
+				return;
+			}
+
+			if (!pageInfo.atToken) {
+				new Notice('인증 토큰을 찾을 수 없습니다. DOM 방식으로 전환...');
+				await this.addSourceViaDOM(view, note);
+				return;
+			}
+
+			// Step 2: izAoDd RPC로 텍스트 소스 추가
+			// 페이로드: [[[null, [title, content], null, 2]], notebookId]
+			const result = await view.webview.executeJavaScript(`
+				(async function() {
+					const notebookId = ${JSON.stringify(pageInfo.notebookId)};
+					const atToken = ${JSON.stringify(pageInfo.atToken)};
+					const title = ${JSON.stringify(title)};
+					const content = ${JSON.stringify(content)};
+
+					const rpcId = 'izAoDd';
+
+					// nlm-py에서 검증된 텍스트 소스 페이로드
+					const requestPayload = [
+						[
+							[
+								null,
+								[title, content],  // [제목, 내용] 배열
+								null,
+								2  // 소스 타입: 텍스트
+							]
+						],
+						notebookId
+					];
+
+					const requestBody = [[[rpcId, JSON.stringify(requestPayload), null, "generic"]]];
+
+					const formData = new URLSearchParams();
+					formData.append('at', atToken);
+					formData.append('f.req', JSON.stringify(requestBody));
+
+					try {
+						const response = await fetch('/_/LabsTailwindUi/data/batchexecute?rpcids=' + rpcId, {
+							method: 'POST',
+							headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+							body: formData.toString(),
+							credentials: 'include'
+						});
+
+						const text = await response.text();
+						console.log('[API Response]', text.substring(0, 300));
+
+						if (response.ok && text.includes('wrb.fr')) {
+							// 소스 ID 추출
+							const match = text.match(/\[\[\[\\"([a-f0-9-]+)\\"\]/);
+							return { success: true, sourceId: match ? match[1] : null };
+						} else {
+							return { success: false, error: 'API error', preview: text.substring(0, 200) };
+						}
+					} catch (error) {
+						return { success: false, error: error.message };
+					}
+				})();
+			`);
+
+			console.log('[NotebookLM Bridge] Text API result:', result);
+
+			if (result?.success) {
+				new Notice(`✅ "${title}" 텍스트 소스 추가 완료!`);
+			} else {
+				console.log('[NotebookLM Bridge] Text API failed, falling back to DOM');
+				new Notice('API 실패. DOM 방식으로 재시도...');
+				await this.addSourceViaDOM(view, note);
+			}
+
+		} catch (error) {
+			console.error('[NotebookLM Bridge] Text API failed:', error);
+			new Notice('API 실패. DOM 방식으로 재시도...');
+			await this.addSourceViaDOM(view, note);
+		}
 	}
 
 	// URL 소스 API 추가 (izAoDd RPC) - 테스트로 검증됨
