@@ -25,13 +25,13 @@ interface NotebookInfo {
 
 type SourceAddMethod = 'dom' | 'api';
 
-interface NotebookLMBridgeSettings {
+interface StarNotebookLMSettings {
 	includeMetadata: boolean;
 	includeFrontmatter: boolean;
 	sourceAddMethod: SourceAddMethod; // 'dom' = DOM 조작, 'api' = API 직접 호출
 }
 
-const DEFAULT_SETTINGS: NotebookLMBridgeSettings = {
+const DEFAULT_SETTINGS: StarNotebookLMSettings = {
 	includeMetadata: true,
 	includeFrontmatter: false,
 	sourceAddMethod: 'api' // 기본값: API 방식
@@ -56,8 +56,8 @@ interface QueuedNote {
 	status: 'pending' | 'sent' | 'failed';
 }
 
-export default class NotebookLMBridgePlugin extends Plugin {
-	settings: NotebookLMBridgeSettings;
+export default class StarNotebookLMPlugin extends Plugin {
+	settings: StarNotebookLMSettings;
 	statusBarItem: HTMLElement;
 	noteQueue: Map<string, QueuedNote> = new Map();
 	currentPageState: any = null;
@@ -168,7 +168,7 @@ export default class NotebookLMBridgePlugin extends Plugin {
 		);
 
 		// 설정 탭 추가
-		this.addSettingTab(new NotebookLMBridgeSettingTab(this.app, this));
+		this.addSettingTab(new StarNotebookLMSettingTab(this.app, this));
 	}
 
 	async onunload() {
@@ -186,11 +186,11 @@ export default class NotebookLMBridgePlugin extends Plugin {
 	updateStatusBar() {
 		const queueSize = this.noteQueue.size;
 		if (queueSize > 0) {
-			this.statusBarItem.setText(`📋 NLM: ${queueSize}`);
-			this.statusBarItem.setAttribute('title', `NotebookLM Bridge\n대기열: ${queueSize}개`);
+			this.statusBarItem.setText(`📋 Star: ${queueSize}`);
+			this.statusBarItem.setAttribute('title', `Star NotebookLM\n대기열: ${queueSize}개`);
 		} else {
-			this.statusBarItem.setText('📘 NLM Bridge');
-			this.statusBarItem.setAttribute('title', 'NotebookLM Bridge 준비됨');
+			this.statusBarItem.setText('📘 Star NLM');
+			this.statusBarItem.setAttribute('title', 'Star NotebookLM 준비됨');
 		}
 	}
 
@@ -291,7 +291,7 @@ export default class NotebookLMBridgePlugin extends Plugin {
 
 	// 노트북 선택 모달 표시
 	async showNotebookSelectModal(note: NoteData) {
-		console.log('[NotebookLM Bridge] 모달 표시 시작');
+		console.log('[Star NotebookLM] 모달 표시 시작');
 
 		// 웹뷰에서 노트북 목록 가져오기 시도
 		let notebooks: NotebookInfo[] = [];
@@ -324,13 +324,13 @@ export default class NotebookLMBridgePlugin extends Plugin {
 					})();
 				`);
 				notebooks = result || [];
-				console.log('[NotebookLM Bridge] 노트북 목록:', notebooks);
+				console.log('[Star NotebookLM] 노트북 목록:', notebooks);
 			} catch (error) {
-				console.error('[NotebookLM Bridge] 노트북 목록 가져오기 실패:', error);
+				console.error('[Star NotebookLM] 노트북 목록 가져오기 실패:', error);
 			}
 		}
 
-		console.log('[NotebookLM Bridge] 모달 생성');
+		console.log('[Star NotebookLM] 모달 생성');
 
 		// 모달 표시
 		const modal = new NotebookSelectModal(this.app, this, notebooks, note.title, async (selectedNotebook) => {
@@ -386,7 +386,7 @@ export default class NotebookLMBridgePlugin extends Plugin {
 			// 페이지 로드 대기 후 노트북 목록 가져오기
 			setTimeout(async () => {
 				const notebooks = await this.getNotebooksFromWebview();
-				console.log('[NotebookLM Bridge] Found notebooks:', notebooks);
+				console.log('[Star NotebookLM] Found notebooks:', notebooks);
 				this.showNotebookModal(note, notebooks);
 			}, 3000);
 		} else {
@@ -529,7 +529,7 @@ export default class NotebookLMBridgePlugin extends Plugin {
 			`);
 			return result || [];
 		} catch (error) {
-			console.error('[NotebookLM Bridge] Failed to get notebooks:', error);
+			console.error('[Star NotebookLM] Failed to get notebooks:', error);
 			return [];
 		}
 	}
@@ -700,7 +700,7 @@ export default class NotebookLMBridgePlugin extends Plugin {
 			}, 4000);
 
 		} catch (error) {
-			console.error('[NotebookLM Bridge] Create notebook failed:', error);
+			console.error('[Star NotebookLM] Create notebook failed:', error);
 			new Notice('새 노트북 생성에 실패했습니다. 수동으로 생성해주세요.');
 			this.addToQueue(note);
 		}
@@ -768,7 +768,7 @@ export default class NotebookLMBridgePlugin extends Plugin {
 				})();
 			`);
 
-			console.log('[NotebookLM Bridge] Page info:', pageInfo);
+			console.log('[Star NotebookLM] Page info:', pageInfo);
 
 			if (!pageInfo.notebookId) {
 				new Notice('노트북을 먼저 선택해주세요.');
@@ -870,18 +870,18 @@ export default class NotebookLMBridgePlugin extends Plugin {
 				if (result) break;
 			}
 
-			console.log('[NotebookLM Bridge] Text API result:', result);
+			console.log('[Star NotebookLM] Text API result:', result);
 
 			if (result?.success) {
 				new Notice(`✅ "${title}" 텍스트 소스 추가 완료!`);
 			} else {
-				console.log('[NotebookLM Bridge] Text API failed, falling back to DOM');
+				console.log('[Star NotebookLM] Text API failed, falling back to DOM');
 				new Notice('API 실패. DOM 방식으로 재시도...');
 				await this.addSourceViaDOM(view, note);
 			}
 
 		} catch (error) {
-			console.error('[NotebookLM Bridge] Text API failed:', error);
+			console.error('[Star NotebookLM] Text API failed:', error);
 			new Notice('API 실패. DOM 방식으로 재시도...');
 			await this.addSourceViaDOM(view, note);
 		}
@@ -918,7 +918,7 @@ export default class NotebookLMBridgePlugin extends Plugin {
 				})();
 			`);
 
-			console.log('[NotebookLM Bridge] Page info:', pageInfo);
+			console.log('[Star NotebookLM] Page info:', pageInfo);
 
 			if (!pageInfo.notebookId) {
 				new Notice('노트북을 먼저 선택해주세요.');
@@ -998,7 +998,7 @@ export default class NotebookLMBridgePlugin extends Plugin {
 				if (result) break;
 			}
 
-			console.log('[NotebookLM Bridge] URL API result:', result);
+			console.log('[Star NotebookLM] URL API result:', result);
 
 			if (result?.success) {
 				new Notice(`✅ "${note.title}" URL 소스 추가 완료!`);
@@ -1008,7 +1008,7 @@ export default class NotebookLMBridgePlugin extends Plugin {
 			}
 
 		} catch (error) {
-			console.error('[NotebookLM Bridge] URL API failed:', error);
+			console.error('[Star NotebookLM] URL API failed:', error);
 			new Notice('API 실패. DOM 방식으로 재시도...');
 			await this.addLinkSourceToNotebook(view, note);
 		}
@@ -1100,7 +1100,7 @@ export default class NotebookLMBridgePlugin extends Plugin {
 					return { success: false, error: 'Source add button not found' };
 				})();
 			`);
-			console.log('[NotebookLM Bridge] Step 1 (소스 추가 버튼):', step1);
+			console.log('[Star NotebookLM] Step 1 (소스 추가 버튼):', step1);
 
 			// Step 2: 소스 업로드 모달에서 스크롤 후 "복사된 텍스트" 옵션 찾아 클릭
 			await this.delay(1500);
@@ -1194,7 +1194,7 @@ export default class NotebookLMBridgePlugin extends Plugin {
 					return { success: false, error: 'Text paste option not found in DOM' };
 				})();
 			`);
-			console.log('[NotebookLM Bridge] Step 2 (복사된 텍스트 옵션):', step2);
+			console.log('[Star NotebookLM] Step 2 (복사된 텍스트 옵션):', step2);
 
 			// Step 2.5: "텍스트 붙여넣기" 클릭 후 "복사된 텍스트" 클릭 필요
 			if (step2?.needsSecondClick) {
@@ -1249,7 +1249,7 @@ export default class NotebookLMBridgePlugin extends Plugin {
 					return { success: false, error: 'textarea.text-area not found or not visible' };
 				})();
 			`);
-			console.log('[NotebookLM Bridge] Step 3 (텍스트 입력):', step3);
+			console.log('[Star NotebookLM] Step 3 (텍스트 입력):', step3);
 
 			// Step 4: 삽입 버튼 클릭
 			await this.delay(800);
@@ -1273,7 +1273,7 @@ export default class NotebookLMBridgePlugin extends Plugin {
 					return { success: false, error: '삽입 button not found' };
 				})();
 			`);
-			console.log('[NotebookLM Bridge] Step 4 (삽입 버튼):', step4);
+			console.log('[Star NotebookLM] Step 4 (삽입 버튼):', step4);
 
 			if (step3?.success && step4?.success) {
 				new Notice(`✅ "${note.title}" 소스가 추가되었습니다!`, 5000);
@@ -1286,7 +1286,7 @@ export default class NotebookLMBridgePlugin extends Plugin {
 			}
 
 		} catch (error) {
-			console.error('[NotebookLM Bridge] Auto add source failed:', error);
+			console.error('[Star NotebookLM] Auto add source failed:', error);
 			try {
 				await navigator.clipboard.writeText(content);
 				new Notice(`📋 "${note.title}" 클립보드에 복사됨.\n\n수동으로 붙여넣기 해주세요.`, 8000);
@@ -1345,7 +1345,7 @@ export default class NotebookLMBridgePlugin extends Plugin {
 					return { success: false, error: 'Source add button not found' };
 				})();
 			`);
-			console.log('[NotebookLM Bridge] Link Step 1 (소스 추가 버튼):', step1);
+			console.log('[Star NotebookLM] Link Step 1 (소스 추가 버튼):', step1);
 
 			await this.delay(1500);
 
@@ -1377,7 +1377,7 @@ export default class NotebookLMBridgePlugin extends Plugin {
 					return { success: false, error: '링크 option not found' };
 				})();
 			`);
-			console.log('[NotebookLM Bridge] Link Step 2 (링크 클릭):', step2);
+			console.log('[Star NotebookLM] Link Step 2 (링크 클릭):', step2);
 
 			await this.delay(1000);
 
@@ -1394,7 +1394,7 @@ export default class NotebookLMBridgePlugin extends Plugin {
 					return { success: false, error: '웹사이트 option not found' };
 				})();
 			`);
-			console.log('[NotebookLM Bridge] Link Step 3 (웹사이트 클릭):', step3);
+			console.log('[Star NotebookLM] Link Step 3 (웹사이트 클릭):', step3);
 
 			await this.delay(2000);
 
@@ -1449,7 +1449,7 @@ export default class NotebookLMBridgePlugin extends Plugin {
 					return { success: false, error: 'URL textarea not found' };
 				})();
 			`);
-			console.log('[NotebookLM Bridge] Link Step 4 (URL 입력):', step4);
+			console.log('[Star NotebookLM] Link Step 4 (URL 입력):', step4);
 
 			await this.delay(1000);
 
@@ -1471,7 +1471,7 @@ export default class NotebookLMBridgePlugin extends Plugin {
 					return { success: false, error: '삽입 button not found' };
 				})();
 			`);
-			console.log('[NotebookLM Bridge] Link Step 5 (삽입 버튼):', step5);
+			console.log('[Star NotebookLM] Link Step 5 (삽입 버튼):', step5);
 
 			if (step4?.success && step5?.success) {
 				new Notice(`✅ "${note.title}" 링크 소스가 추가되었습니다!\n(${note.shareLink})`, 5000);
@@ -1483,7 +1483,7 @@ export default class NotebookLMBridgePlugin extends Plugin {
 			}
 
 		} catch (error) {
-			console.error('[NotebookLM Bridge] Link source add failed:', error);
+			console.error('[Star NotebookLM] Link source add failed:', error);
 			try {
 				await navigator.clipboard.writeText(note.shareLink!);
 				new Notice(`📋 "${note.title}" URL이 클립보드에 복사됨.\n\n수동으로 붙여넣기 해주세요.`, 8000);
@@ -1625,10 +1625,10 @@ export default class NotebookLMBridgePlugin extends Plugin {
 			await this.app.vault.adapter.write(debugPath, debugContent);
 			new Notice(`DOM 정보가 ${debugPath}에 저장되었습니다.\n\n버튼 ${domInfo.buttons.length}개\n노트북 링크 ${domInfo.notebookLinks.length}개\n입력필드 ${domInfo.textInputs.length}개\n다이얼로그 ${domInfo.dialogs.length}개`, 8000);
 
-			console.log('[NotebookLM Bridge] DOM Info:', domInfo);
+			console.log('[Star NotebookLM] DOM Info:', domInfo);
 
 		} catch (error) {
-			console.error('[NotebookLM Bridge] Debug failed:', error);
+			console.error('[Star NotebookLM] Debug failed:', error);
 			new Notice('DOM 정보 수집 실패: ' + error.message);
 		}
 	}
@@ -1657,11 +1657,11 @@ export default class NotebookLMBridgePlugin extends Plugin {
 
 // NotebookLM 웹뷰 클래스
 class NotebookLMView extends ItemView {
-	plugin: NotebookLMBridgePlugin;
+	plugin: StarNotebookLMPlugin;
 	webviewEl: HTMLElement;
 	webview: any; // Electron webview
 
-	constructor(leaf: WorkspaceLeaf, plugin: NotebookLMBridgePlugin) {
+	constructor(leaf: WorkspaceLeaf, plugin: StarNotebookLMPlugin) {
 		super(leaf);
 		this.plugin = plugin;
 	}
@@ -1997,12 +1997,12 @@ class NotebookLMView extends ItemView {
 
 // 노트북 선택 모달
 class NotebookSelectModal extends Modal {
-	plugin: NotebookLMBridgePlugin;
+	plugin: StarNotebookLMPlugin;
 	notebooks: NotebookInfo[];
 	onSelect: (notebook: NotebookInfo | null) => void;
 	noteTitle: string;
 
-	constructor(app: App, plugin: NotebookLMBridgePlugin, notebooks: NotebookInfo[], noteTitle: string, onSelect: (notebook: NotebookInfo | null) => void) {
+	constructor(app: App, plugin: StarNotebookLMPlugin, notebooks: NotebookInfo[], noteTitle: string, onSelect: (notebook: NotebookInfo | null) => void) {
 		super(app);
 		this.plugin = plugin;
 		this.notebooks = notebooks;
@@ -2079,10 +2079,10 @@ class NotebookSelectModal extends Modal {
 	}
 }
 
-class NotebookLMBridgeSettingTab extends PluginSettingTab {
-	plugin: NotebookLMBridgePlugin;
+class StarNotebookLMSettingTab extends PluginSettingTab {
+	plugin: StarNotebookLMPlugin;
 
-	constructor(app: App, plugin: NotebookLMBridgePlugin) {
+	constructor(app: App, plugin: StarNotebookLMPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
@@ -2091,7 +2091,7 @@ class NotebookLMBridgeSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 
-		containerEl.createEl('h2', { text: 'NotebookLM Bridge 설정' });
+		containerEl.createEl('h2', { text: 'Star NotebookLM 설정' });
 
 		new Setting(containerEl)
 			.setName('메타데이터 포함')

@@ -1,7 +1,7 @@
 {
-	"name": "obsidian-notebooklm-bridge",
+	"name": "star-notebooklm",
 	"version": "1.0.0",
-	"description": "Bridge plugin to send Obsidian notes to NotebookLM",
+	"description": "Obsidian plugin to send notes to NotebookLM",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
@@ -10,9 +10,9 @@
 	"keywords": [
 		"obsidian",
 		"notebooklm",
-		"bridge"
+		"star"
 	],
-	"author": "Your Name",
+	"author": "starhunter",
 	"license": "MIT",
 	"devDependencies": {
 		"@types/node": "^20.10.0",

@@ -1,4 +1,4 @@
-# Star Bridge - Obsidian to NotebookLM
+# Star NotebookLM - Obsidian Plugin
 
 Obsidian 노트를 Google NotebookLM에 소스로 추가하는 플러그인입니다.
 
@@ -35,7 +35,7 @@ Obsidian 노트를 Google NotebookLM에 소스로 추가하는 플러그인입�
 ### 빌드
 
 ```bash
-cd star-bridge
+cd star-notebooklm
 
 # 의존성 설치
 npm install
@@ -125,7 +125,7 @@ cp main.js manifest.json styles.css ~/Library/Application\ Support/obsidian/plug
 ## 개발
 
 ```bash
-cd star-bridge
+cd star-notebooklm
 
 # 개발 모드 (watch)
 npm run dev

@@ -1,12 +1,12 @@
-# Star Bridge - 개발 가이드
+# Star NotebookLM - 개발 가이드
 
 Obsidian ↔ NotebookLM 브릿지 프로젝트
 
 ## 프로젝트 구조
 
 ```
-star-bridge/
-├── star-bridge/              # Obsidian 플러그인 (메인)
+star-notebooklm/
+├── star-notebooklm/              # Obsidian 플러그인 (메인)
 │   ├── main.ts              # 플러그인 메인 소스
 │   ├── main.js              # 빌드된 파일
 │   ├── manifest.json        # 플러그인 메타데이터
@@ -39,7 +39,7 @@ Obsidian 노트 → 내장 웹뷰 → NotebookLM API (izAoDd RPC) → 소스 추
 ### Obsidian 플러그인
 
 ```bash
-cd star-bridge
+cd star-notebooklm
 
 # 의존성 설치
 npm install
@@ -135,7 +135,7 @@ window.WIZ_global_data.SNlM0e
 
 ### API 테스트
 ```bash
-cd star-bridge
+cd star-notebooklm
 node test-api.mjs
 ```
 
