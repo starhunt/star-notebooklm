@@ -1,7 +1,7 @@
 {
 	"id": "star-notebooklm",
 	"name": "Star NotebookLM",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"minAppVersion": "1.0.0",
 	"description": "Obsidian 노트를 NotebookLM에 소스로 추가하는 플러그인",
 	"author": "starhunter",

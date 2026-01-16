@@ -1,6 +1,6 @@
 {
 	"name": "star-notebooklm",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"description": "Obsidian plugin to send notes to NotebookLM",
 	"main": "main.js",
 	"scripts": {
