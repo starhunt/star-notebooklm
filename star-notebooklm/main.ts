@@ -5,6 +5,7 @@ import {
 	Setting,
 	Notice,
 	TFile,
+	TAbstractFile,
 	MarkdownView,
 	Menu,
 	Editor,
@@ -116,7 +117,7 @@ export default class StarNotebookLMPlugin extends Plugin {
 			}
 		});
 
-		// 파일 메뉴에 항목 추가
+		// 파일 메뉴에 항목 추가 (단일 파일)
 		this.registerEvent(
 			this.app.workspace.on('file-menu', (menu: Menu, file: TFile) => {
 				if (file instanceof TFile && file.extension === 'md') {
@@ -126,6 +127,24 @@ export default class StarNotebookLMPlugin extends Plugin {
 							.setIcon('send')
 							.onClick(async () => {
 								await this.sendFileToQueue(file);
+							});
+					});
+				}
+			})
+		);
+
+		// 다중 파일 메뉴에 항목 추가 (Obsidian 1.4.10+)
+		this.registerEvent(
+			this.app.workspace.on('files-menu', (menu: Menu, files: TAbstractFile[], source: string) => {
+				const mdFiles = files.filter(f => f instanceof TFile && f.extension === 'md') as TFile[];
+
+				if (mdFiles.length > 1) {  // 2개 이상일 때만 표시
+					menu.addItem((item) => {
+						item
+							.setTitle(`NotebookLM에 전송 (${mdFiles.length}개)`)
+							.setIcon('send')
+							.onClick(async () => {
+								await this.sendFilesToQueue(mdFiles);
 							});
 					});
 				}
@@ -388,6 +407,202 @@ export default class StarNotebookLMPlugin extends Plugin {
 		} else {
 			// 웹뷰 없으면 바로 모달 표시
 			this.showNotebookModal(note, []);
+		}
+	}
+
+	// 다중 파일 대기열에 추가 (배치 전송)
+	async sendFilesToQueue(files: TFile[]) {
+		// 모든 파일 내용 로드
+		const notes = await Promise.all(
+			files.map(file => this.getFileContent(file))
+		);
+
+		// NotebookLM 뷰 열기
+		await this.openNotebookLMView();
+		const view = this.getNotebookLMView();
+
+		if (view && view.webview) {
+			new Notice(`${notes.length}개 노트 준비 중...`);
+			view.webview.loadURL('https://notebooklm.google.com');
+
+			setTimeout(async () => {
+				const notebooks = await this.getNotebooksFromWebview();
+				this.showBatchNotebookModal(notes, notebooks);
+			}, 3000);
+		} else {
+			this.showBatchNotebookModal(notes, []);
+		}
+	}
+
+	// 배치용 노트북 선택 모달 표시
+	showBatchNotebookModal(notes: NoteData[], notebooks: NotebookInfo[]) {
+		const modal = new NotebookSelectModal(
+			this.app,
+			this,
+			notebooks,
+			`${notes.length}개 노트`,  // 제목에 개수 표시
+			async (selected: any) => {
+				const view = this.getNotebookLMView();
+
+				if (selected) {
+					// 기존 노트북 선택
+					new Notice(`"${selected.title}" 노트북으로 ${notes.length}개 노트 전송 중...`);
+
+					if (view && view.webview) {
+						if (selected.url) {
+							// URL이 있으면 직접 이동
+							view.webview.loadURL(selected.url);
+						} else {
+							// viewType에 따라 다른 클릭 방식 사용
+							await view.webview.executeJavaScript(`
+								(function() {
+									const title = ${JSON.stringify(selected.title)};
+									const viewType = ${JSON.stringify(selected.viewType || 'table')};
+
+									// 방법 1: 테이블 행 클릭 (모바일 뷰)
+									if (viewType === 'table') {
+										const titleEls = document.querySelectorAll('.project-table-title');
+										for (const el of titleEls) {
+											if (el.textContent.trim() === title) {
+												const row = el.closest('tr');
+												if (row) {
+													row.click();
+													return { success: true, method: 'table' };
+												}
+											}
+										}
+									}
+
+									// 방법 2: project-button 클릭 (PC 뷰 카드)
+									if (viewType === 'projectButton') {
+										const projectButtons = document.querySelectorAll('project-button.project-button');
+										for (const btn of projectButtons) {
+											const titleEl = btn.querySelector('span.project-button-title, .project-button-title');
+											if (titleEl && titleEl.textContent.trim() === title) {
+												const clickTarget = btn.querySelector('.primary-action-button, mat-card.project-button-card') || btn;
+												clickTarget.click();
+												return { success: true, method: 'projectButton' };
+											}
+										}
+									}
+
+									// 방법 3: mat-card 클릭 (PC 뷰)
+									if (viewType === 'matcard') {
+										const matCards = document.querySelectorAll('mat-card.project-button-card');
+										for (const card of matCards) {
+											const titleEl = card.querySelector('span.project-button-title, .project-button-title');
+											if (titleEl && titleEl.textContent.trim() === title) {
+												const clickTarget = card.querySelector('.primary-action-button') || card;
+												clickTarget.click();
+												return { success: true, method: 'matcard' };
+											}
+										}
+									}
+
+									// 방법 4: 제목 텍스트로 클릭 가능한 요소 찾기 (폴백)
+									const allElements = document.querySelectorAll('*');
+									for (const el of allElements) {
+										if (el.textContent.trim() === title &&
+											(el.tagName === 'H2' || el.tagName === 'H3' ||
+											 el.className.includes('title') || el.closest('[role="button"]'))) {
+											const clickable = el.closest('[role="button"], a, button, [class*="card"], [class*="item"], tr') || el;
+											clickable.click();
+											return { success: true, method: 'fallback' };
+										}
+									}
+
+									return { success: false, error: 'Notebook not found: ' + title };
+								})();
+							`);
+						}
+
+						// 페이지 로드 후 배치 소스 추가
+						setTimeout(() => {
+							this.addSourcesToNotebook(view, notes);
+						}, 3000);
+					}
+				} else {
+					// 새 노트북 만들기
+					new Notice('새 노트북 생성 중...');
+
+					if (view && view.webview) {
+						// 새 노트북 만들기 버튼 클릭
+						await view.webview.executeJavaScript(`
+							(function() {
+								const buttons = document.querySelectorAll('button');
+								for (const btn of buttons) {
+									const text = (btn.textContent || '').toLowerCase();
+									if (text.includes('만들기') || text.includes('create')) {
+										btn.click();
+										return true;
+									}
+								}
+								return false;
+							})();
+						`);
+
+						// 새 노트북이 생성되면 자동으로 소스 추가 다이얼로그가 열림
+						// 이 다이얼로그를 닫고 API로 직접 소스 추가
+						setTimeout(async () => {
+							// 소스 추가 다이얼로그 닫기
+							await view.webview.executeJavaScript(`
+								(function() {
+									const closeButtons = document.querySelectorAll('button[aria-label="닫기"], button[aria-label="Close"], mat-dialog-container button.close-button, .mat-mdc-dialog-container button[mat-dialog-close], mat-bottom-sheet-container button.close-button');
+									for (const btn of closeButtons) {
+										if (btn.offsetParent !== null) {
+											btn.click();
+											return { success: true, method: 'closeButton' };
+										}
+									}
+									const backdrop = document.querySelector('.cdk-overlay-backdrop, .mat-mdc-dialog-container + .cdk-overlay-backdrop');
+									if (backdrop) {
+										backdrop.click();
+										return { success: true, method: 'backdrop' };
+									}
+									document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+									return { success: true, method: 'escape' };
+								})();
+							`);
+
+							// 다이얼로그 닫힌 후 배치 소스 추가
+							await this.delay(500);
+							this.addSourcesToNotebook(view, notes);
+						}, 3500);
+					}
+				}
+			}
+		);
+		modal.open();
+	}
+
+	// 배치 소스 추가 메서드
+	async addSourcesToNotebook(view: NotebookLMView, notes: NoteData[]) {
+		const total = notes.length;
+		let success = 0;
+		let failed = 0;
+
+		for (let i = 0; i < notes.length; i++) {
+			const note = notes[i];
+			new Notice(`추가 중... (${i + 1}/${total}) - ${note.title}`);
+
+			try {
+				await this.addSourceToNotebook(view, note);
+				success++;
+			} catch (error) {
+				console.error(`[Star NotebookLM] Failed to add ${note.title}:`, error);
+				failed++;
+			}
+
+			// API 과부하 방지를 위한 딜레이 (마지막 제외)
+			if (i < notes.length - 1) {
+				await this.delay(1000);
+			}
+		}
+
+		if (failed === 0) {
+			new Notice(`✅ ${success}개 노트 모두 추가 완료!`);
+		} else {
+			new Notice(`완료! 성공: ${success}개, 실패: ${failed}개`);
 		}
 	}
 

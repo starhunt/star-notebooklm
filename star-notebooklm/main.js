@@ -94,6 +94,18 @@ var StarNotebookLMPlugin = class extends import_obsidian.Plugin {
       })
     );
     this.registerEvent(
+      this.app.workspace.on("files-menu", (menu, files, source) => {
+        const mdFiles = files.filter((f) => f instanceof import_obsidian.TFile && f.extension === "md");
+        if (mdFiles.length > 1) {
+          menu.addItem((item) => {
+            item.setTitle(`NotebookLM\uC5D0 \uC804\uC1A1 (${mdFiles.length}\uAC1C)`).setIcon("send").onClick(async () => {
+              await this.sendFilesToQueue(mdFiles);
+            });
+          });
+        }
+      })
+    );
+    this.registerEvent(
       this.app.workspace.on("editor-menu", (menu, editor, view) => {
         menu.addItem((item) => {
           item.setTitle("NotebookLM\uC5D0 \uC804\uC1A1").setIcon("send").onClick(async () => {
@@ -285,6 +297,174 @@ var StarNotebookLMPlugin = class extends import_obsidian.Plugin {
       }, 3e3);
     } else {
       this.showNotebookModal(note, []);
+    }
+  }
+  // 다중 파일 대기열에 추가 (배치 전송)
+  async sendFilesToQueue(files) {
+    const notes = await Promise.all(
+      files.map((file) => this.getFileContent(file))
+    );
+    await this.openNotebookLMView();
+    const view = this.getNotebookLMView();
+    if (view && view.webview) {
+      new import_obsidian.Notice(`${notes.length}\uAC1C \uB178\uD2B8 \uC900\uBE44 \uC911...`);
+      view.webview.loadURL("https://notebooklm.google.com");
+      setTimeout(async () => {
+        const notebooks = await this.getNotebooksFromWebview();
+        this.showBatchNotebookModal(notes, notebooks);
+      }, 3e3);
+    } else {
+      this.showBatchNotebookModal(notes, []);
+    }
+  }
+  // 배치용 노트북 선택 모달 표시
+  showBatchNotebookModal(notes, notebooks) {
+    const modal = new NotebookSelectModal(
+      this.app,
+      this,
+      notebooks,
+      `${notes.length}\uAC1C \uB178\uD2B8`,
+      // 제목에 개수 표시
+      async (selected) => {
+        const view = this.getNotebookLMView();
+        if (selected) {
+          new import_obsidian.Notice(`"${selected.title}" \uB178\uD2B8\uBD81\uC73C\uB85C ${notes.length}\uAC1C \uB178\uD2B8 \uC804\uC1A1 \uC911...`);
+          if (view && view.webview) {
+            if (selected.url) {
+              view.webview.loadURL(selected.url);
+            } else {
+              await view.webview.executeJavaScript(`
+								(function() {
+									const title = ${JSON.stringify(selected.title)};
+									const viewType = ${JSON.stringify(selected.viewType || "table")};
+
+									// \uBC29\uBC95 1: \uD14C\uC774\uBE14 \uD589 \uD074\uB9AD (\uBAA8\uBC14\uC77C \uBDF0)
+									if (viewType === 'table') {
+										const titleEls = document.querySelectorAll('.project-table-title');
+										for (const el of titleEls) {
+											if (el.textContent.trim() === title) {
+												const row = el.closest('tr');
+												if (row) {
+													row.click();
+													return { success: true, method: 'table' };
+												}
+											}
+										}
+									}
+
+									// \uBC29\uBC95 2: project-button \uD074\uB9AD (PC \uBDF0 \uCE74\uB4DC)
+									if (viewType === 'projectButton') {
+										const projectButtons = document.querySelectorAll('project-button.project-button');
+										for (const btn of projectButtons) {
+											const titleEl = btn.querySelector('span.project-button-title, .project-button-title');
+											if (titleEl && titleEl.textContent.trim() === title) {
+												const clickTarget = btn.querySelector('.primary-action-button, mat-card.project-button-card') || btn;
+												clickTarget.click();
+												return { success: true, method: 'projectButton' };
+											}
+										}
+									}
+
+									// \uBC29\uBC95 3: mat-card \uD074\uB9AD (PC \uBDF0)
+									if (viewType === 'matcard') {
+										const matCards = document.querySelectorAll('mat-card.project-button-card');
+										for (const card of matCards) {
+											const titleEl = card.querySelector('span.project-button-title, .project-button-title');
+											if (titleEl && titleEl.textContent.trim() === title) {
+												const clickTarget = card.querySelector('.primary-action-button') || card;
+												clickTarget.click();
+												return { success: true, method: 'matcard' };
+											}
+										}
+									}
+
+									// \uBC29\uBC95 4: \uC81C\uBAA9 \uD14D\uC2A4\uD2B8\uB85C \uD074\uB9AD \uAC00\uB2A5\uD55C \uC694\uC18C \uCC3E\uAE30 (\uD3F4\uBC31)
+									const allElements = document.querySelectorAll('*');
+									for (const el of allElements) {
+										if (el.textContent.trim() === title &&
+											(el.tagName === 'H2' || el.tagName === 'H3' ||
+											 el.className.includes('title') || el.closest('[role="button"]'))) {
+											const clickable = el.closest('[role="button"], a, button, [class*="card"], [class*="item"], tr') || el;
+											clickable.click();
+											return { success: true, method: 'fallback' };
+										}
+									}
+
+									return { success: false, error: 'Notebook not found: ' + title };
+								})();
+							`);
+            }
+            setTimeout(() => {
+              this.addSourcesToNotebook(view, notes);
+            }, 3e3);
+          }
+        } else {
+          new import_obsidian.Notice("\uC0C8 \uB178\uD2B8\uBD81 \uC0DD\uC131 \uC911...");
+          if (view && view.webview) {
+            await view.webview.executeJavaScript(`
+							(function() {
+								const buttons = document.querySelectorAll('button');
+								for (const btn of buttons) {
+									const text = (btn.textContent || '').toLowerCase();
+									if (text.includes('\uB9CC\uB4E4\uAE30') || text.includes('create')) {
+										btn.click();
+										return true;
+									}
+								}
+								return false;
+							})();
+						`);
+            setTimeout(async () => {
+              await view.webview.executeJavaScript(`
+								(function() {
+									const closeButtons = document.querySelectorAll('button[aria-label="\uB2EB\uAE30"], button[aria-label="Close"], mat-dialog-container button.close-button, .mat-mdc-dialog-container button[mat-dialog-close], mat-bottom-sheet-container button.close-button');
+									for (const btn of closeButtons) {
+										if (btn.offsetParent !== null) {
+											btn.click();
+											return { success: true, method: 'closeButton' };
+										}
+									}
+									const backdrop = document.querySelector('.cdk-overlay-backdrop, .mat-mdc-dialog-container + .cdk-overlay-backdrop');
+									if (backdrop) {
+										backdrop.click();
+										return { success: true, method: 'backdrop' };
+									}
+									document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+									return { success: true, method: 'escape' };
+								})();
+							`);
+              await this.delay(500);
+              this.addSourcesToNotebook(view, notes);
+            }, 3500);
+          }
+        }
+      }
+    );
+    modal.open();
+  }
+  // 배치 소스 추가 메서드
+  async addSourcesToNotebook(view, notes) {
+    const total = notes.length;
+    let success = 0;
+    let failed = 0;
+    for (let i = 0; i < notes.length; i++) {
+      const note = notes[i];
+      new import_obsidian.Notice(`\uCD94\uAC00 \uC911... (${i + 1}/${total}) - ${note.title}`);
+      try {
+        await this.addSourceToNotebook(view, note);
+        success++;
+      } catch (error) {
+        console.error(`[Star NotebookLM] Failed to add ${note.title}:`, error);
+        failed++;
+      }
+      if (i < notes.length - 1) {
+        await this.delay(1e3);
+      }
+    }
+    if (failed === 0) {
+      new import_obsidian.Notice(`\u2705 ${success}\uAC1C \uB178\uD2B8 \uBAA8\uB450 \uCD94\uAC00 \uC644\uB8CC!`);
+    } else {
+      new import_obsidian.Notice(`\uC644\uB8CC! \uC131\uACF5: ${success}\uAC1C, \uC2E4\uD328: ${failed}\uAC1C`);
     }
   }
   // 웹뷰에서 노트북 목록 가져오기
